@@ -1,4 +1,4 @@
-use petgraph::graph::{NodeIndex, UnGraph, DiGraph};
+use petgraph::graph::{NodeIndex, UnGraph, Graph};
 use petgraph::graphmap::{GraphMap};
 use petgraph::algo::{dijkstra, min_spanning_tree};
 use petgraph::data::FromElements;
@@ -7,6 +7,12 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::process::Command;
 use rand::Rng;
+
+#[derive(Clone,Copy,Eq,PartialEq,PartialOrd,Hash,Debug,Ord)]
+struct NodeInfo {
+    numerical_id: usize,
+    partition_id: usize
+}
 
 // Here I use the ampersend to prevent this function
 // from taking ownership of the string that is passed
@@ -21,6 +27,7 @@ use rand::Rng;
 fn write_to_file(s: &String) {
     const TEMP_FILE_NAME: &str = "temp.dot";
     let mut f = File::create(TEMP_FILE_NAME).unwrap();
+    println!("{}", s);
     f.write(s.as_bytes()).unwrap();
 
     gen_graph_image(TEMP_FILE_NAME);
@@ -45,35 +52,39 @@ fn gen_sample_graph() -> UnGraph<i32, ()> {
 }
 
 // TODO: Add an option for ensuring that the graph is acyclic
-fn gen_random_digraph(acyclic: bool) -> GraphMap<i64, i64, petgraph::Directed> {
-    let mut g = GraphMap::<i64, i64, petgraph::Directed>::new();
+fn gen_random_digraph(acyclic: bool) -> GraphMap<NodeInfo, i64, petgraph::Directed> {
+    let mut g = GraphMap::<NodeInfo, i64, petgraph::Directed>::new();
 
     let mut rng = rand::thread_rng();
 
-    let num_nodes: i32 = rng.gen_range(1..=20);
+    let num_nodes: usize = rng.gen_range(1..=20);
     let max_num_edges = num_nodes * (num_nodes - 1) / 2;
-    let num_edges: i32 = rng.gen_range(0..=max_num_edges);
+    let num_edges: usize = rng.gen_range(0..=max_num_edges);
 
     println!("Number of nodes: {}", num_nodes);
     println!("Number of edges: {}", num_edges);
 
     for i in 0..num_nodes {
-        g.add_node(i.into());
+        g.add_node(NodeInfo{numerical_id: i as usize, partition_id: 0});
     }
 
     for i in 0..num_edges {
-        let mut a: i64 = 0;
-        let mut b: i64 = 0;
+        // These do not need to be
+        // mutable beceause we are
+        // only assinging any value
+        // to them once.
+        let a: usize;
+        let b: usize;
 
         if !acyclic {
-            a = rng.gen_range(0..num_nodes).into();
-            b = rng.gen_range(0..num_nodes).into();
+            a = rng.gen_range(0..num_nodes);
+            b = rng.gen_range(0..num_nodes);
         } else {
-            a = rng.gen_range(0..num_nodes - 1).into();
-            b = rng.gen_range(a+1..num_nodes.into()).into();
+            a = rng.gen_range(0..num_nodes - 1);
+            b = rng.gen_range(a+1..num_nodes.into());
         }
 
-        g.add_edge(a, b, i.into());
+        g.add_edge(NodeInfo {numerical_id: a, partition_id: 0}, NodeInfo {numerical_id: b, partition_id: 0}, i as i64);
     }
 
     // The following is equivalent to 'return g;'
@@ -87,6 +98,8 @@ fn gen_graph_image(file_name: &'static str) {
 fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
     let g = gen_random_digraph(true);
+    let null_out = |_, _| "".to_string();
+    //let null_out2 = |_, _| "color=\"green\"".to_string();
 
     // Output the tree to `graphviz` `DOT` format
     //
@@ -94,7 +107,33 @@ fn gen_sample_graph_image() {
     // trait, but not the fmt::Display trait that is required by a mere '{}'
     // See https://github.com/rust-lang/rfcs/blob/master/text/0565-show-string-guidelines.md
     // for details
-    let dot_dump = format!("{:?}", Dot::with_config(&g, &[Config::EdgeNoLabel]));
+
+    let mut partition: Vec<usize> = vec![];
+
+    let mut gen_random_partitions = |graph: &GraphMap<NodeInfo, i64, petgraph::Directed>| {
+        let mut rng = rand::thread_rng();
+
+        let nodes = graph.nodes();
+        let num_nodes = graph.node_count();
+
+        for n in nodes {
+            let partition_idx = rng.gen_range(0..num_nodes);
+            partition.push(partition_idx);
+            println!("(node_idx, partition_idx) = ({:?}, {})", n, partition_idx);
+        }
+    };
+
+    gen_random_partitions(&g);
+
+    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &GraphMap<NodeInfo, i64, petgraph::Directed>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: std::fmt::Debug {
+        println!("Node id: {:?}", node_ref.weight());
+        //println!("{}", partition);
+        "color=\"green\"".to_string()
+    }
+
+    //let dot_dump = format!("{:?}", Dot::with_config(&g, &[Config::EdgeNoLabel]));
+    //let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &null_out2));
+    let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
     
     let _ = write_to_file(&dot_dump);
 }
