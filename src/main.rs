@@ -52,8 +52,8 @@ fn gen_sample_graph() -> UnGraph<i32, ()> {
 }
 
 // TODO: Add an option for ensuring that the graph is acyclic
-fn gen_random_digraph(acyclic: bool) -> GraphMap<NodeInfo, i64, petgraph::Directed> {
-    let mut g = GraphMap::<NodeInfo, i64, petgraph::Directed>::new();
+fn gen_random_digraph(acyclic: bool) -> GraphMap<NodeInfo, usize, petgraph::Directed> {
+    let mut g = GraphMap::<NodeInfo, usize, petgraph::Directed>::new();
 
     let mut rng = rand::thread_rng();
 
@@ -65,7 +65,7 @@ fn gen_random_digraph(acyclic: bool) -> GraphMap<NodeInfo, i64, petgraph::Direct
     println!("Number of edges: {}", num_edges);
 
     for i in 0..num_nodes {
-        g.add_node(NodeInfo{numerical_id: i as usize, partition_id: 0});
+        g.add_node(NodeInfo{numerical_id: i, partition_id: 0});
     }
 
     for i in 0..num_edges {
@@ -81,10 +81,10 @@ fn gen_random_digraph(acyclic: bool) -> GraphMap<NodeInfo, i64, petgraph::Direct
             b = rng.gen_range(0..num_nodes);
         } else {
             a = rng.gen_range(0..num_nodes - 1);
-            b = rng.gen_range(a+1..num_nodes.into());
+            b = rng.gen_range(a+1..num_nodes);
         }
 
-        g.add_edge(NodeInfo {numerical_id: a, partition_id: 0}, NodeInfo {numerical_id: b, partition_id: 0}, i as i64);
+        g.add_edge(NodeInfo {numerical_id: a, partition_id: 0}, NodeInfo {numerical_id: b, partition_id: 0}, i);
     }
 
     // The following is equivalent to 'return g;'
@@ -99,7 +99,6 @@ fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
     let g = gen_random_digraph(true);
     let null_out = |_, _| "".to_string();
-    //let null_out2 = |_, _| "color=\"green\"".to_string();
 
     // Output the tree to `graphviz` `DOT` format
     //
@@ -110,7 +109,7 @@ fn gen_sample_graph_image() {
 
     let mut partition: Vec<usize> = vec![];
 
-    let mut gen_random_partitions = |graph: &GraphMap<NodeInfo, i64, petgraph::Directed>| {
+    let mut gen_random_partitions = |graph: &GraphMap<NodeInfo, usize, petgraph::Directed>| {
         let mut rng = rand::thread_rng();
 
         let nodes = graph.nodes();
@@ -125,14 +124,12 @@ fn gen_sample_graph_image() {
 
     gen_random_partitions(&g);
 
-    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &GraphMap<NodeInfo, i64, petgraph::Directed>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: std::fmt::Debug {
+    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &GraphMap<NodeInfo, usize, petgraph::Directed>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: std::fmt::Debug {
         println!("Node id: {:?}", node_ref.weight());
         //println!("{}", partition);
         "color=\"green\"".to_string()
     }
 
-    //let dot_dump = format!("{:?}", Dot::with_config(&g, &[Config::EdgeNoLabel]));
-    //let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &null_out2));
     let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
     
     let _ = write_to_file(&dot_dump);
