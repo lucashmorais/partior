@@ -5,14 +5,39 @@ use petgraph::data::FromElements;
 use petgraph::dot::{Dot, Config};
 use std::fs::File;
 use std::io::prelude::*;
+use std::fmt;
 use std::process::Command;
 use rand::Rng;
 
-#[derive(Clone,Copy,Eq,PartialEq,PartialOrd,Hash,Debug,Ord)]
+pub trait HasPartition {
+    fn partition_id(&self) -> usize;
+}
+
+#[derive(Clone,Copy,Eq,PartialEq,PartialOrd,Hash,Ord)]
 struct NodeInfo {
     numerical_id: usize,
     partition_id: usize
 }
+
+impl fmt::Display for NodeInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.numerical_id)
+    }
+}
+
+impl fmt::Debug for NodeInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.numerical_id)
+    }
+}
+
+impl HasPartition for NodeInfo {
+  fn partition_id(&self) -> usize {
+    self.partition_id
+  }
+}
+
+const COLORS: &'static [&'static str] = &["#d9ed92", "#b5e48c", "#99d98c", "#76c893", "#52b69a", "#34a0a4", "#168aad", "#1a759f", "#1e6091", "#184e77", "#797d62", "#9b9b7a", "#baa587", "#d9ae94", "#f1dca7", "#ffcb69", "#e8ac65", "#d08c60", "#b58463", "#997b66", "#250902", "#38040e", "#640d14", "#800e13", "#ad2831"];
 
 // Here I use the ampersend to prevent this function
 // from taking ownership of the string that is passed
@@ -124,10 +149,12 @@ fn gen_sample_graph_image() {
 
     gen_random_partitions(&g);
 
-    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &GraphMap<NodeInfo, usize, petgraph::Directed>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: std::fmt::Debug {
-        println!("Node id: {:?}", node_ref.weight());
+    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &GraphMap<NodeInfo, usize, petgraph::Directed>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
+        let w = node_ref.weight();
+        println!("(node_id, partition_id) = ({:?}, {})", w, w.partition_id());
+        println!("Node id: {:?}", w);
         //println!("{}", partition);
-        "color=\"green\"".to_string()
+        format!("color=\"{}\"", COLORS[w.partition_id()]).to_string()
     }
 
     let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
