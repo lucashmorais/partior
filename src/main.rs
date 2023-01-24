@@ -1,5 +1,7 @@
 use petgraph::graph::{NodeIndex, UnGraph, Graph};
 use petgraph::graphmap::{GraphMap};
+use petgraph::visit::IntoNodeReferences;
+use petgraph::visit::NodeRef;
 use petgraph::algo::{dijkstra, min_spanning_tree};
 use petgraph::data::FromElements;
 use petgraph::dot::{Dot, Config};
@@ -28,6 +30,7 @@ impl fmt::Display for NodeInfo {
 impl fmt::Debug for NodeInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.numerical_id)
+        //write!(f, "{}, {}", self.numerical_id, self.partition_id)
     }
 }
 
@@ -52,7 +55,7 @@ const COLORS: &'static [&'static str] = &["#d9ed92", "#b5e48c", "#99d98c", "#76c
 fn write_to_file(s: &String) {
     const TEMP_FILE_NAME: &str = "temp.dot";
     let mut f = File::create(TEMP_FILE_NAME).unwrap();
-    println!("{}", s);
+    //println!("{}", s);
     f.write(s.as_bytes()).unwrap();
 
     gen_graph_image(TEMP_FILE_NAME);
@@ -120,46 +123,42 @@ fn gen_graph_image(file_name: &'static str) {
     let _dot_proc_output = Command::new("dot").arg("-Tpng").arg(file_name).arg("-o").arg("output.png").output().unwrap();
 }
 
-fn gen_sample_graph_image() {
-    //let g = gen_sample_graph();
-    let g = gen_random_digraph(true);
+fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, petgraph::Directed>) -> Graph<NodeInfo, usize, petgraph::Directed, usize>{
+    let mut g : petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = graph.into_graph();
+    let mut rng = rand::thread_rng();
+    let num_nodes = g.node_count();
+
+    for w in g.node_weights_mut() {
+        println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
+
+        let new_pid = rng.gen_range(0..num_nodes);
+        w.partition_id = new_pid;
+    }
+
+    for w in g.node_weights() {
+        println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
+    }
+
     let null_out = |_, _| "".to_string();
 
-    // Output the tree to `graphviz` `DOT` format
-    //
-    // We use a '{:?}' modifier here because the Dot class implements the dmt::Debug
-    // trait, but not the fmt::Display trait that is required by a mere '{}'
-    // See https://github.com/rust-lang/rfcs/blob/master/text/0565-show-string-guidelines.md
-    // for details
-
-    let mut partition: Vec<usize> = vec![];
-
-    let mut gen_random_partitions = |graph: &GraphMap<NodeInfo, usize, petgraph::Directed>| {
-        let mut rng = rand::thread_rng();
-
-        let nodes = graph.nodes();
-        let num_nodes = graph.node_count();
-
-        for n in nodes {
-            let partition_idx = rng.gen_range(0..num_nodes);
-            partition.push(partition_idx);
-            println!("(node_idx, partition_idx) = ({:?}, {})", n, partition_idx);
-        }
-    };
-
-    gen_random_partitions(&g);
-
-    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &GraphMap<NodeInfo, usize, petgraph::Directed>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
+    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &Graph<NodeInfo, usize, petgraph::Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
         let w = node_ref.weight();
-        println!("(node_id, partition_id) = ({:?}, {})", w, w.partition_id());
-        println!("Node id: {:?}", w);
-        //println!("{}", partition);
-        format!("color=\"{}\"", COLORS[w.partition_id()]).to_string()
+        let c = COLORS[w.partition_id()];
+        format!("style=filled, color=\"{}\", fillcolor=\"{}\"", c, c).to_string()
     }
 
     let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
     
     let _ = write_to_file(&dot_dump);
+
+    g
+}
+
+fn gen_sample_graph_image() {
+    //let g = gen_sample_graph();
+    let g = gen_random_digraph(true);
+
+    set_random_partitions_and_visualize_graph(g);
 }
 
 fn main() {
