@@ -1,4 +1,4 @@
-use petgraph::graph::{NodeIndex, UnGraph, Graph};
+use petgraph::graph::*;
 use petgraph::graphmap::{GraphMap};
 use petgraph::visit::IntoNodeReferences;
 use petgraph::visit::NodeRef;
@@ -10,6 +10,15 @@ use std::io::prelude::*;
 use std::fmt;
 use std::process::Command;
 use rand::Rng;
+use std::cmp::min;
+use statrs::function::factorial::binomial;
+
+/*
+use num_integer::binomial;
+use num::FromPrimitive;
+use num::bigint::BigInt;
+use num::cast::ToPrimitive;
+*/
 
 pub trait HasPartition {
     fn partition_id(&self) -> usize;
@@ -62,7 +71,7 @@ fn write_to_file(s: &String) {
 }
 
 // Create an undirected graph with `i32` nodes and edges with `()` associated data.
-fn gen_sample_graph() -> UnGraph<i32, ()> {
+fn _gen_sample_graph() -> UnGraph<i32, ()> {
     let g = UnGraph::<i32, ()>::from_edges(&[
         (1, 2), (2, 3), (3, 4),
         (1, 4)]);
@@ -77,6 +86,60 @@ fn gen_sample_graph() -> UnGraph<i32, ()> {
     assert_eq!(g.raw_edges().len() - 1, mst.raw_edges().len());
 
     return mst;
+}
+
+pub trait CanCountInternalLinks {
+    fn internal_edge_count(&self) -> usize;
+}
+
+impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize> {
+    fn internal_edge_count(&self) -> usize {
+        let mut num_internal_links : usize = 0;
+
+        for v in self.node_references() {
+            let pid = v.weight().partition_id();
+            println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
+
+            for n in self.neighbors(v.id()) {
+                println!("[internal_edge_count]: Visiting neighbor {:?}", n);
+                let neighbor_weight = self.node_weight(n).unwrap();
+                let npid = neighbor_weight.partition_id;
+                
+                if  npid == pid {
+                    num_internal_links += 1;
+                }
+            }
+        }
+
+        println!("[internal_edge_count]: num_internal_links = {}", num_internal_links);
+        num_internal_links
+    }
+}
+
+fn calculate_max_internal_links(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> u64 {
+    50
+}
+
+fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> f64 {
+    let num_nodes = g.node_count();
+
+    let num_links : u64 = g.edge_count() as u64;
+    let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
+
+    let num_internal_links : u64 = g.internal_edge_count() as u64;
+    let num_max_internal_links = calculate_max_internal_links(g);
+
+    let top = min(num_links, num_max_internal_links);
+    let mut surprise: f64 = 0.0;
+
+    for j in num_internal_links..=top {
+        surprise -= (binomial(num_max_internal_links, j)) * (binomial(num_max_links - num_max_internal_links, num_links - j));
+    }
+    surprise /= binomial(num_max_links, num_links);
+
+    println!("Graph surprise: {}", surprise);
+
+    surprise
 }
 
 // TODO: Add an option for ensuring that the graph is acyclic
@@ -150,6 +213,7 @@ fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, pe
     let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
     
     let _ = write_to_file(&dot_dump);
+    calculate_surprise(&g);
 
     g
 }
