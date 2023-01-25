@@ -207,6 +207,10 @@ fn gen_random_digraph(acyclic: bool) -> petgraph::Graph<NodeInfo, usize, petgrap
     g
 }
 
+fn gen_histogram(csv_path_with_suffix: &'static str, image_output_without_suffix: &'static str) {
+    let _dot_proc_output = Command::new("src/histogram.py").arg(csv_path_with_suffix).arg(image_output_without_suffix).output().unwrap();
+}
+
 fn gen_graph_image(file_name: &'static str) {
     let _dot_proc_output = Command::new("dot").arg("-Tpng").arg(file_name).arg("-o").arg("output.png").output().unwrap();
 }
@@ -256,9 +260,11 @@ fn set_random_partitions_and_visualize_graph(graph: &mut petgraph::Graph<NodeInf
 }
 
 fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize, num_iterations: usize) {
+    const CSV_PATH_WITH_SUFFIX : &str = "surprise.csv";
+    const HIST_PATH_WITHOUT_SUFFIX : &str = "surprise_hist";
+    
     let mut g = original_graph.clone();
-
-    let mut wtr = Writer::from_path("foo.csv").unwrap();
+    let mut wtr = Writer::from_path(CSV_PATH_WITH_SUFFIX).unwrap();
 
     // Header
     wtr.write_record(&["surprise"]);
@@ -275,6 +281,7 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
     }
 
     wtr.flush();
+    gen_histogram(CSV_PATH_WITH_SUFFIX, HIST_PATH_WITHOUT_SUFFIX);
 }
 
 fn gen_sample_graph_image() {
