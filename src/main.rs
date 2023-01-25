@@ -13,6 +13,7 @@ use rand::Rng;
 use std::cmp::min;
 use statrs::function::factorial::binomial;
 use std::collections::HashMap;
+use csv::Writer;
 
 
 /*
@@ -257,14 +258,18 @@ fn set_random_partitions_and_visualize_graph(graph: &mut petgraph::Graph<NodeInf
 fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize, num_iterations: usize) {
     let mut g = original_graph.clone();
 
+    let mut wtr = Writer::from_path("foo.csv").unwrap();
     for _ in 0..num_iterations {
         set_random_partitions(&mut g, max_partitions);
         let s = calculate_surprise(&g);
-        println!("{}", s);
+        //println!("{}", s);
         if s > -0.001 {
             visualize_graph(&g);
         }
+
+        wtr.write_record(&[s.to_string()]);
     }
+    wtr.flush();
 }
 
 fn gen_sample_graph_image() {
