@@ -53,6 +53,7 @@ impl HasPartition for NodeInfo {
   }
 }
 
+#[allow(dead_code)]
 const COLORS: &'static [&'static str] = &["#d9ed92", "#b5e48c", "#99d98c", "#76c893", "#52b69a", "#34a0a4", "#168aad", "#1a759f", "#1e6091", "#184e77", "#797d62", "#9b9b7a", "#baa587", "#d9ae94", "#f1dca7", "#ffcb69", "#e8ac65", "#d08c60", "#b58463", "#997b66", "#250902", "#38040e", "#640d14", "#800e13", "#ad2831"];
 
 // Here I use the ampersend to prevent this function
@@ -241,6 +242,7 @@ fn set_random_partitions(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
     */
 }
 
+#[allow(dead_code)]
 fn get_number_of_partitions(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) -> usize {
     let mut items_per_partition = HashMap::new();
 
@@ -255,7 +257,7 @@ fn get_number_of_partitions(g: &petgraph::Graph<NodeInfo, usize, petgraph::Direc
 fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) {
     let null_out = |_, _| "".to_string();
 
-    let num_partitions = get_number_of_partitions(g);
+    //let num_partitions = get_number_of_partitions(g);
 
     fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &&Graph<NodeInfo, usize, petgraph::Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
         let w = node_ref.weight();
