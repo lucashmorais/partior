@@ -41,8 +41,8 @@ impl fmt::Display for NodeInfo {
 
 impl fmt::Debug for NodeInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.numerical_id)
-        //write!(f, "{}, {}", self.numerical_id, self.partition_id)
+        //write!(f, "{}", self.numerical_id)
+        write!(f, "{}, {}", self.numerical_id, self.partition_id)
     }
 }
 
@@ -259,6 +259,10 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
     let mut g = original_graph.clone();
 
     let mut wtr = Writer::from_path("foo.csv").unwrap();
+
+    // Header
+    wtr.write_record(&["surprise"]);
+
     for _ in 0..num_iterations {
         set_random_partitions(&mut g, max_partitions);
         let s = calculate_surprise(&g);
@@ -269,6 +273,7 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
 
         wtr.write_record(&[s.to_string()]);
     }
+
     wtr.flush();
 }
 
