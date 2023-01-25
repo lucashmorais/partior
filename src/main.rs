@@ -201,7 +201,7 @@ fn gen_random_digraph(acyclic: bool) -> petgraph::Graph<NodeInfo, usize, petgrap
         g.add_edge(NodeInfo {numerical_id: a, partition_id: 0}, NodeInfo {numerical_id: b, partition_id: 0}, i);
     }
     
-    let mut g : petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = g.into_graph();
+    let g : petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = g.into_graph();
 
     // The following is equivalent to 'return g;'
     g
@@ -233,9 +233,11 @@ fn set_random_partitions(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
         w.partition_id = new_pid;
     }
 
+    /*
     for w in g.node_weights() {
-        //println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
+        println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
     }
+    */
 }
 
 fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) {
@@ -267,7 +269,7 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
     let mut wtr = Writer::from_path(CSV_PATH_WITH_SUFFIX).unwrap();
 
     // Header
-    wtr.write_record(&["surprise"]);
+    wtr.write_record(&["surprise"]).unwrap();
 
     for _ in 0..num_iterations {
         set_random_partitions(&mut g, max_partitions);
@@ -277,13 +279,14 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
             visualize_graph(&g);
         }
 
-        wtr.write_record(&[s.to_string()]);
+        wtr.write_record(&[s.to_string()]).unwrap();
     }
 
-    wtr.flush();
+    wtr.flush().unwrap();
     gen_histogram(CSV_PATH_WITH_SUFFIX, HIST_PATH_WITHOUT_SUFFIX);
 }
 
+#[allow(dead_code)]
 fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
     let mut g = gen_random_digraph(true);
