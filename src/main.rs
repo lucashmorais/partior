@@ -15,6 +15,7 @@ use statrs::function::factorial::binomial;
 use std::collections::HashMap;
 use csv::Writer;
 
+const MAX_NUMBER_OF_PARTITIONS: usize = 8;
 
 /*
 use num_integer::binomial;
@@ -240,12 +241,26 @@ fn set_random_partitions(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
     */
 }
 
+fn get_number_of_partitions(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) -> usize {
+    let mut items_per_partition = HashMap::new();
+
+    for v in g.node_references() {
+        let pid = v.weight().partition_id();
+        let _ = items_per_partition.entry(pid).or_insert(0);
+    }
+
+    items_per_partition.len()
+}
+
 fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) {
     let null_out = |_, _| "".to_string();
 
+    let num_partitions = get_number_of_partitions(g);
+
     fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &&Graph<NodeInfo, usize, petgraph::Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
         let w = node_ref.weight();
-        let c = COLORS[w.partition_id()];
+        //let c = COLORS[w.partition_id()];
+        let c = get_equally_hue_spaced_hsv_string(w.partition_id(), MAX_NUMBER_OF_PARTITIONS);
         format!("style=filled, color=\"{}\", fillcolor=\"{}\"", c, c).to_string()
     }
 
@@ -259,6 +274,13 @@ fn set_random_partitions_and_visualize_graph(graph: &mut petgraph::Graph<NodeInf
     set_random_partitions(graph, max_partitions);
     visualize_graph(&graph);
     graph
+}
+
+fn get_equally_hue_spaced_hsv_string(index: usize, num_items: usize) -> String {
+    let h: f64 = (index as f64) / (num_items as f64);
+    let res = format!("{} 0.600 1.00", h);
+    println!("{}", res);
+    res
 }
 
 fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize, num_iterations: usize) {
@@ -290,13 +312,13 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
 fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
     let mut g = gen_random_digraph(true);
-    let new_graph = set_random_partitions_and_visualize_graph(&mut g, 8);
+    let new_graph = set_random_partitions_and_visualize_graph(&mut g, MAX_NUMBER_OF_PARTITIONS);
     visualize_graph(&new_graph);
 }
 
 fn test_histogram_01() {
     let g = gen_random_digraph(true);
-    evaluate_multiple_random_clusterings(&g, 8, 5000);
+    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 5000);
 }
 
 fn main() {
