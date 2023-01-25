@@ -13,3 +13,4 @@ Cargo.lock
 temp.dot
 *.png
 *.out
+*.csv
