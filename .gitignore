@@ -11,4 +11,5 @@ Cargo.lock
 
 **/*.swp
 temp.dot
-output.png
+*.png
+*.out
