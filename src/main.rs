@@ -1,5 +1,5 @@
 use petgraph::graph::*;
-use petgraph::graphmap::{GraphMap};
+use petgraph::graphmap::GraphMap;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::visit::NodeRef;
 use petgraph::algo::{dijkstra, min_spanning_tree};
@@ -134,13 +134,15 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
             max_internal_links += n * (n - 1) / 2;
         }
 
-        //println!("[calculate_max_internal_links]: Partition size HashMap: {:?}", items_per_partition);
-        //println!("[calculate_max_internal_links]: max_internal_links: {}", max_internal_links);
+        println!("[calculate_max_internal_links]: Partition size HashMap: {:?}", items_per_partition);
+        println!("[calculate_max_internal_links]: max_internal_links: {}", max_internal_links);
 
         max_internal_links
     }
 }
 
+// Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
+// Better clusterings have a higher surprise value.
 fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> f64 {
     let num_nodes = g.node_count();
 
@@ -163,7 +165,6 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> 
     surprise
 }
 
-// TODO: Add an option for ensuring that the graph is acyclic
 fn gen_random_digraph(acyclic: bool) -> GraphMap<NodeInfo, usize, petgraph::Directed> {
     let mut g = GraphMap::<NodeInfo, usize, petgraph::Directed>::new();
 
@@ -207,15 +208,22 @@ fn gen_graph_image(file_name: &'static str) {
     let _dot_proc_output = Command::new("dot").arg("-Tpng").arg(file_name).arg("-o").arg("output.png").output().unwrap();
 }
 
-fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, petgraph::Directed>) -> Graph<NodeInfo, usize, petgraph::Directed, usize>{
+fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, petgraph::Directed>, max_partitions: usize) -> Graph<NodeInfo, usize, petgraph::Directed, usize>{
     let mut g : petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = graph.into_graph();
     let mut rng = rand::thread_rng();
     let num_nodes = g.node_count();
 
+    let max_pid;
+    if max_partitions > 0 {
+        max_pid = max_partitions;
+    } else {
+        max_pid = num_nodes;
+    }
+
     for w in g.node_weights_mut() {
         println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
 
-        let new_pid = rng.gen_range(0..num_nodes);
+        let new_pid = rng.gen_range(0..max_pid);
         w.partition_id = new_pid;
     }
 
@@ -243,16 +251,9 @@ fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
     let g = gen_random_digraph(true);
 
-    set_random_partitions_and_visualize_graph(g);
+    set_random_partitions_and_visualize_graph(g, 8);
 }
 
 fn main() {
-    //let output_str: String = String::from_utf8()?;
-
-    // Here we use "unwrap()" instead of "?" to implement void
-    // error handling because "?" includes a return statement
-    // that would require this function to return a Result<(), Error>
-    //
-    // We could have used 'expect("some_error_msg")' as well
     gen_sample_graph_image();
 }
