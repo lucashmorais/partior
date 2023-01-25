@@ -101,10 +101,10 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
 
         for v in self.node_references() {
             let pid = v.weight().partition_id();
-            println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
+            //println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
 
             for n in self.neighbors(v.id()) {
-                println!("[internal_edge_count]: Visiting neighbor {:?}", n);
+                //println!("[internal_edge_count]: Visiting neighbor {:?}", n);
                 let neighbor_weight = self.node_weight(n).unwrap();
                 let npid = neighbor_weight.partition_id;
                 
@@ -114,7 +114,7 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
             }
         }
 
-        println!("[internal_edge_count]: num_internal_links = {}", num_internal_links);
+        //println!("[internal_edge_count]: num_internal_links = {}", num_internal_links);
         num_internal_links
     }
 
@@ -134,8 +134,8 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
             max_internal_links += n * (n - 1) / 2;
         }
 
-        println!("[calculate_max_internal_links]: Partition size HashMap: {:?}", items_per_partition);
-        println!("[calculate_max_internal_links]: max_internal_links: {}", max_internal_links);
+        //println!("[calculate_max_internal_links]: Partition size HashMap: {:?}", items_per_partition);
+        //println!("[calculate_max_internal_links]: max_internal_links: {}", max_internal_links);
 
         max_internal_links
     }
@@ -160,12 +160,12 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> 
     }
     surprise /= binomial(num_max_links, num_links);
 
-    println!("Graph surprise: {}", surprise);
+    //println!("Graph surprise: {}", surprise);
 
     surprise
 }
 
-fn gen_random_digraph(acyclic: bool) -> GraphMap<NodeInfo, usize, petgraph::Directed> {
+fn gen_random_digraph(acyclic: bool) -> petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> {
     let mut g = GraphMap::<NodeInfo, usize, petgraph::Directed>::new();
 
     let mut rng = rand::thread_rng();
@@ -199,6 +199,8 @@ fn gen_random_digraph(acyclic: bool) -> GraphMap<NodeInfo, usize, petgraph::Dire
 
         g.add_edge(NodeInfo {numerical_id: a, partition_id: 0}, NodeInfo {numerical_id: b, partition_id: 0}, i);
     }
+    
+    let mut g : petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = g.into_graph();
 
     // The following is equivalent to 'return g;'
     g
@@ -220,14 +222,14 @@ fn set_random_partitions(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
     }
 
     for w in g.node_weights_mut() {
-        println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
+        //println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
 
         let new_pid = rng.gen_range(0..max_pid);
         w.partition_id = new_pid;
     }
 
     for w in g.node_weights() {
-        println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
+        //println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
     }
 }
 
@@ -246,21 +248,38 @@ fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
     calculate_surprise(&g);
 }
 
-fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, petgraph::Directed>, max_partitions: usize) -> Graph<NodeInfo, usize, petgraph::Directed, usize>{
-    let mut g : petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = graph.into_graph();
-    set_random_partitions(&mut g, max_partitions);
-    visualize_graph(&g);
+fn set_random_partitions_and_visualize_graph(graph: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize) -> &Graph<NodeInfo, usize, petgraph::Directed, usize>{
+    set_random_partitions(graph, max_partitions);
+    visualize_graph(&graph);
+    graph
+}
 
-    g
+fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize, num_iterations: usize) {
+    let mut g = original_graph.clone();
+
+    for _ in 0..num_iterations {
+        set_random_partitions(&mut g, max_partitions);
+        let s = calculate_surprise(&g);
+        println!("{}", s);
+        if s > -0.001 {
+            visualize_graph(&g);
+        }
+    }
 }
 
 fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
-    let g = gen_random_digraph(true);
-    let new_graph = set_random_partitions_and_visualize_graph(g, 8);
+    let mut g = gen_random_digraph(true);
+    let new_graph = set_random_partitions_and_visualize_graph(&mut g, 8);
     visualize_graph(&new_graph);
 }
 
+fn test_histogram_01() {
+    let g = gen_random_digraph(true);
+    evaluate_multiple_random_clusterings(&g, 8, 5000);
+}
+
 fn main() {
-    gen_sample_graph_image();
+    //gen_sample_graph_image();
+    test_histogram_01();
 }
