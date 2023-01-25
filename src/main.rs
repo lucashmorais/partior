@@ -12,6 +12,8 @@ use std::process::Command;
 use rand::Rng;
 use std::cmp::min;
 use statrs::function::factorial::binomial;
+use std::collections::HashMap;
+
 
 /*
 use num_integer::binomial;
@@ -90,6 +92,7 @@ fn _gen_sample_graph() -> UnGraph<i32, ()> {
 
 pub trait CanCountInternalLinks {
     fn internal_edge_count(&self) -> usize;
+    fn calculate_max_internal_links(&self) -> usize;
 }
 
 impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize> {
@@ -114,10 +117,30 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
         println!("[internal_edge_count]: num_internal_links = {}", num_internal_links);
         num_internal_links
     }
-}
 
-fn calculate_max_internal_links(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> u64 {
-    50
+    fn calculate_max_internal_links(&self) -> usize {
+        // Type inference lets us omit an explicit type signature (which
+        // would be `HashMap<String, String>` in this example).
+        let mut items_per_partition = HashMap::new();
+
+        for v in self.node_references() {
+            let pid = v.weight().partition_id();
+
+            let hash_count = items_per_partition.entry(pid).or_insert(0);
+            *hash_count += 1;
+        }
+
+        let mut max_internal_links = 0;
+
+        for n in items_per_partition.values() {
+            max_internal_links += n * (n - 1) / 2;
+        }
+
+        //println!("[calculate_max_internal_links]: Partition size HashMap: {:?}", items_per_partition);
+        //println!("[calculate_max_internal_links]: max_internal_links: {}", max_internal_links);
+
+        max_internal_links
+    }
 }
 
 fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> f64 {
@@ -127,15 +150,15 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> 
     let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
 
     let num_internal_links : u64 = g.internal_edge_count() as u64;
-    let num_max_internal_links = calculate_max_internal_links(g);
+    let num_max_internal_links = g.calculate_max_internal_links() as u64;
 
     let top = min(num_links, num_max_internal_links);
     let mut surprise: f64 = 0.0;
 
     for j in num_internal_links..=top {
-        surprise -= (binomial(num_max_internal_links, j)) * (binomial(num_max_links - num_max_internal_links, num_links - j));
+        //surprise -= (binomial(num_max_internal_links, j)) * (binomial(num_max_links - num_max_internal_links, num_links - j));
     }
-    surprise /= binomial(num_max_links, num_links);
+    //surprise /= binomial(num_max_links, num_links);
 
     println!("Graph surprise: {}", surprise);
 
