@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sys
 
-assert (len(sys.argv) > 2), 'Usage: histogram.py path_to_input_csv path_to_output'
+if len(sys.argv) <= 2:
+    print('Usage: histogram.py path_to_input_csv path_to_output')
+    exit()
 
 input_path = sys.argv[1]
 output_path = sys.argv[2]
