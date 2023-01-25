@@ -208,8 +208,7 @@ fn gen_graph_image(file_name: &'static str) {
     let _dot_proc_output = Command::new("dot").arg("-Tpng").arg(file_name).arg("-o").arg("output.png").output().unwrap();
 }
 
-fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, petgraph::Directed>, max_partitions: usize) -> Graph<NodeInfo, usize, petgraph::Directed, usize>{
-    let mut g : petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = graph.into_graph();
+fn set_random_partitions(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize) {
     let mut rng = rand::thread_rng();
     let num_nodes = g.node_count();
 
@@ -230,10 +229,12 @@ fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, pe
     for w in g.node_weights() {
         println!("(nid, pid) = ({}, {})", w.numerical_id, w.partition_id);
     }
+}
 
+fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) {
     let null_out = |_, _| "".to_string();
 
-    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &Graph<NodeInfo, usize, petgraph::Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
+    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &&Graph<NodeInfo, usize, petgraph::Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
         let w = node_ref.weight();
         let c = COLORS[w.partition_id()];
         format!("style=filled, color=\"{}\", fillcolor=\"{}\"", c, c).to_string()
@@ -243,6 +244,12 @@ fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, pe
     
     let _ = write_to_file(&dot_dump);
     calculate_surprise(&g);
+}
+
+fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, petgraph::Directed>, max_partitions: usize) -> Graph<NodeInfo, usize, petgraph::Directed, usize>{
+    let mut g : petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = graph.into_graph();
+    set_random_partitions(&mut g, max_partitions);
+    visualize_graph(&g);
 
     g
 }
@@ -250,8 +257,8 @@ fn set_random_partitions_and_visualize_graph(graph: GraphMap<NodeInfo, usize, pe
 fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
     let g = gen_random_digraph(true);
-
-    set_random_partitions_and_visualize_graph(g, 8);
+    let new_graph = set_random_partitions_and_visualize_graph(g, 8);
+    visualize_graph(&new_graph);
 }
 
 fn main() {
