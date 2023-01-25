@@ -119,8 +119,6 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
     }
 
     fn calculate_max_internal_links(&self) -> usize {
-        // Type inference lets us omit an explicit type signature (which
-        // would be `HashMap<String, String>` in this example).
         let mut items_per_partition = HashMap::new();
 
         for v in self.node_references() {
@@ -156,9 +154,9 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> 
     let mut surprise: f64 = 0.0;
 
     for j in num_internal_links..=top {
-        //surprise -= (binomial(num_max_internal_links, j)) * (binomial(num_max_links - num_max_internal_links, num_links - j));
+        surprise -= (binomial(num_max_internal_links, j)) * (binomial(num_max_links - num_max_internal_links, num_links - j));
     }
-    //surprise /= binomial(num_max_links, num_links);
+    surprise /= binomial(num_max_links, num_links);
 
     println!("Graph surprise: {}", surprise);
 
