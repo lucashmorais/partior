@@ -15,6 +15,9 @@ use statrs::function::factorial::binomial;
 use std::collections::HashMap;
 use csv::Writer;
 
+use metaheuristics_nature::{Rga, Solver};
+use metaheuristics_nature::tests::TestObj;
+
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
 const MAX_NUMBER_OF_NODES: usize = 64;
 
@@ -394,12 +397,119 @@ fn gen_sample_graph_image() {
     visualize_graph(&new_graph, None);
 }
 
+#[allow(dead_code)]
 fn test_histogram_01() {
     let g = gen_random_digraph(true, 16, 16);
     evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 100000000, true);
 }
 
+#[allow(dead_code)]
+fn test_metaheuristics_01() {
+    let mut report = Vec::with_capacity(20);
+
+
+// Build and run the solver
+    let s = Solver::build(Rga::default(), TestObj::new())
+        .task(|ctx| ctx.gen == 20)
+        .callback(|ctx| report.push(ctx.best_f))
+        .solve()
+        .unwrap();
+
+    // Get the result from objective function
+    let ans = s.result();
+    // Get the optimized XY value of your function
+    let xs = s.best_parameters();
+    let y = s.best_fitness();
+    // Get the history reports
+    let y2 = report[2];
+
+    println!("(ans, xs, y, y2) = ({:?}, {:?}, {:?}, {:?})", ans, xs, y, y2);
+}
+
+use metaheuristics_nature::Bounded;
+use metaheuristics_nature::ObjFunc;
+use metaheuristics_nature::ObjFactory;
+
+struct MyFunc<'a> {
+    graph: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>
+}
+
+impl Bounded for MyFunc<'_> {
+    fn bound(&self) -> &[[f64; 2]] {
+        &[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES]
+    }
+}
+
+fn round_float_array(float_arr: &[f64]) -> [usize; MAX_NUMBER_OF_NODES] {
+    let mut int_arr: [usize; MAX_NUMBER_OF_NODES] = [0; MAX_NUMBER_OF_NODES];
+
+    for i in 0..float_arr.len() {
+        int_arr[i] = float_arr[i].round() as usize;
+    }
+
+    int_arr
+}
+
+/*
+impl ObjFunc for MyFunc<'_> {
+    type Fitness = f64;
+
+    fn fitness(&self, x: &[f64]) -> Self::Fitness {
+        calculate_surprise(&self.graph, Some(&round_float_array(x)))
+    }
+}
+*/
+
+impl ObjFactory for MyFunc<'_> {
+    type Product = [usize; MAX_NUMBER_OF_NODES];
+    type Eval = f64;
+
+    fn produce(&self, xs: &[f64]) -> Self::Product {
+        let mut pid_array = [0; 64];
+        round_float_array(xs)
+    }
+
+    fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
+        -calculate_surprise(&self.graph, Some(&x))
+    }
+}
+
+#[allow(dead_code)]
+// https://docs.rs/metaheuristics-nature/8.0.4/metaheuristics_nature/trait.ObjFunc.html
+fn test_metaheuristics_02() {
+    let mut report = Vec::with_capacity(20);
+    let g = gen_random_digraph(true, 16, 16);
+
+// Build and run the solver
+    //let s = Solver::build(Rga::default(), TestObj::new())
+    let s = Solver::build(Rga::default(), MyFunc{graph: &g})
+        .task(|ctx| ctx.gen == 10)
+        .callback(|ctx| report.push(ctx.best_f))
+        .solve()
+        .unwrap();
+
+    // Get the result from objective function
+    let ans = s.result();
+    // Get the optimized XY value of your function
+    let xs = s.best_parameters();
+    let y = s.best_fitness();
+    // Get the history reports
+    let y2 = report[2];
+
+    println!("best fitness: {:?}", y);
+    println!("");
+    println!("answer: {:?}", ans);
+    println!("fitness_history:");
+    for h in report {
+        println!("{}", h);
+    }
+
+    visualize_graph(&g, Some(&ans));
+}
+
 fn main() {
     //gen_sample_graph_image();
-    test_histogram_01();
+    //test_histogram_01();
+    //test_metaheuristics_01();
+    test_metaheuristics_02();
 }
