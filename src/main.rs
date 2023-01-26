@@ -277,6 +277,20 @@ fn set_random_partitions(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
     */
 }
 
+fn randomize_pid_array (pid_array: &mut [usize], num_nodes: usize, max_partitions: usize) {
+    let max_pid;
+    if max_partitions > 0 {
+        max_pid = max_partitions;
+    } else {
+        max_pid = num_nodes;
+    }
+
+    let mut rng = rand::thread_rng();
+    for i in 0..num_nodes {
+        pid_array[i] = rng.gen_range(1..=max_pid);
+    }
+}
+
 #[allow(dead_code)]
 fn get_number_of_partitions(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) -> usize {
     let mut items_per_partition = HashMap::new();
@@ -334,21 +348,15 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
     // Header
     wtr.write_record(&["surprise"]).unwrap();
 
-    let max_pid;
-    if max_partitions > 0 {
-        max_pid = max_partitions;
-    } else {
-        max_pid = g.node_count();
-    }
-
     let mut best_surprise_so_far: f64 = -1.1;
+
+    let mut _pid_array: [usize; MAX_NUMBER_OF_NODES] = [0; MAX_NUMBER_OF_NODES];
+    let num_nodes = g.node_count();
+
     for i in 0..num_iterations {
         //set_random_partitions(&mut g, max_partitions);
 
-        let _pid_array: [usize; MAX_NUMBER_OF_NODES] = core::array::from_fn(|_| {
-            let mut rng = rand::thread_rng();
-            rng.gen_range(1..=max_pid)
-        });
+        randomize_pid_array(&mut _pid_array, num_nodes, max_partitions);
 
         let s = calculate_surprise(&g, Some(&_pid_array));
         if s > best_surprise_so_far {
