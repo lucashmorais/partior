@@ -303,12 +303,22 @@ fn get_number_of_partitions(g: &petgraph::Graph<NodeInfo, usize, petgraph::Direc
     items_per_partition.len()
 }
 
-fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) {
+fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) {
     let null_out = |_, _| "".to_string();
-
+    let mut g = g.clone();
+        
     //let num_partitions = get_number_of_partitions(g);
+    
+    if pid_array.is_some() {
+        let pid_array = pid_array.unwrap();
 
-    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &&Graph<NodeInfo, usize, petgraph::Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
+        for w in g.node_weights_mut() {
+            let new_pid = pid_array[w.numerical_id];
+            w.partition_id = new_pid;
+        }
+    }
+
+    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &Graph<NodeInfo, usize, petgraph::Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
         //let new_node_ref: NodeIndex;
         //new_node_ref = node_ref.into();
 
@@ -326,7 +336,7 @@ fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
 
 fn set_random_partitions_and_visualize_graph(graph: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize) -> &Graph<NodeInfo, usize, petgraph::Directed, usize>{
     set_random_partitions(graph, max_partitions);
-    visualize_graph(&graph);
+    visualize_graph(&graph, None);
     graph
 }
 
@@ -350,18 +360,18 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
 
     let mut best_surprise_so_far: f64 = -1.1;
 
-    let mut _pid_array: [usize; MAX_NUMBER_OF_NODES] = [0; MAX_NUMBER_OF_NODES];
+    let mut pid_array: [usize; MAX_NUMBER_OF_NODES] = [0; MAX_NUMBER_OF_NODES];
     let num_nodes = g.node_count();
 
     for i in 0..num_iterations {
         //set_random_partitions(&mut g, max_partitions);
 
-        randomize_pid_array(&mut _pid_array, num_nodes, max_partitions);
+        randomize_pid_array(&mut pid_array, num_nodes, max_partitions);
 
-        let s = calculate_surprise(&g, Some(&_pid_array));
+        let s = calculate_surprise(&g, Some(&pid_array));
         if s > best_surprise_so_far {
             if gen_image {
-                visualize_graph(&g);
+                visualize_graph(&g, Some(&pid_array));
             }
 
             best_surprise_so_far = s;
@@ -381,12 +391,12 @@ fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
     let mut g = gen_random_digraph(true, 20, 64);
     let new_graph = set_random_partitions_and_visualize_graph(&mut g, MAX_NUMBER_OF_PARTITIONS);
-    visualize_graph(&new_graph);
+    visualize_graph(&new_graph, None);
 }
 
 fn test_histogram_01() {
-    let g = gen_random_digraph(true, 20, 32);
-    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 50000, true);
+    let g = gen_random_digraph(true, 16, 16);
+    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 100000000, true);
 }
 
 fn main() {
