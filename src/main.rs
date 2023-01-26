@@ -286,7 +286,7 @@ fn set_random_partitions_and_visualize_graph(graph: &mut petgraph::Graph<NodeInf
 fn get_equally_hue_spaced_hsv_string(index: usize, num_items: usize) -> String {
     let h: f64 = (index as f64) / (num_items as f64);
     let res = format!("{} 0.600 1.00", h);
-    println!("{}", res);
+    //println!("{}", res);
     res
 }
 
@@ -300,12 +300,15 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
     // Header
     wtr.write_record(&["surprise"]).unwrap();
 
+    let mut best_surprise_so_far: f64 = -1.0;
     for i in 0..num_iterations {
         set_random_partitions(&mut g, max_partitions);
         let s = calculate_surprise(&g);
         //println!("[evaluate_multiple_random_clusterings]: {}", i);
-        if s > -0.001 {
+        if s > best_surprise_so_far {
             visualize_graph(&g);
+            best_surprise_so_far = s;
+            println!("[evaluate_multiple_random_clusterings]: (iteration, best_surprise_so_far): ({}, {})", i, s);
         }
 
         wtr.write_record(&[s.to_string()]).unwrap();
@@ -324,8 +327,8 @@ fn gen_sample_graph_image() {
 }
 
 fn test_histogram_01() {
-    let g = gen_random_digraph(true, 20, 16);
-    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 5000);
+    let g = gen_random_digraph(true, 20, 32);
+    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 3000000);
 }
 
 fn main() {
