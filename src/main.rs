@@ -15,7 +15,7 @@ use statrs::function::factorial::binomial;
 use std::collections::HashMap;
 use csv::Writer;
 
-use metaheuristics_nature::{Rga, Solver};
+use metaheuristics_nature::{Rga, Fa, Solver};
 use metaheuristics_nature::tests::TestObj;
 
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
@@ -481,9 +481,9 @@ fn test_metaheuristics_02() {
     let g = gen_random_digraph(true, 16, 16);
 
 // Build and run the solver
-    //let s = Solver::build(Rga::default(), TestObj::new())
-    let s = Solver::build(Rga::default(), MyFunc{graph: &g})
-        .task(|ctx| ctx.gen == 10)
+    //let s = Solver::build(Rga::default(), MyFunc{graph: &g})
+    let s = Solver::build(Fa::default(), MyFunc{graph: &g})
+        .task(|ctx| ctx.gen == 10000)
         .callback(|ctx| report.push(ctx.best_f))
         .solve()
         .unwrap();
