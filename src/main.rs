@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use csv::Writer;
 
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
+const MAX_NUMBER_OF_NODES: usize = 64;
 
 /*
 use num_integer::binomial;
@@ -151,11 +152,19 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
                 let hash_count = items_per_partition.entry(pid).or_insert(0);
                 *hash_count += 1;
             }
+        } else {
+            let pid_array = pid_array.unwrap();
 
+            for v in self.node_references() {
+                let pid = pid_array[v.weight().numerical_id];
 
-            for n in items_per_partition.values() {
-                max_internal_links += n * (n - 1) / 2;
+                let hash_count = items_per_partition.entry(pid).or_insert(0);
+                *hash_count += 1;
             }
+        }
+
+        for n in items_per_partition.values() {
+            max_internal_links += n * (n - 1) / 2;
         }
 
         //println!("[calculate_max_internal_links]: Partition size HashMap: {:?}", items_per_partition);
@@ -286,6 +295,9 @@ fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
     //let num_partitions = get_number_of_partitions(g);
 
     fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &&Graph<NodeInfo, usize, petgraph::Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
+        //let new_node_ref: NodeIndex;
+        //new_node_ref = node_ref.into();
+
         let w = node_ref.weight();
         //let c = COLORS[w.partition_id()];
         let c = get_equally_hue_spaced_hsv_string(w.partition_id(), MAX_NUMBER_OF_PARTITIONS);
@@ -315,21 +327,30 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
     const CSV_PATH_WITH_SUFFIX : &str = "surprise.csv";
     const HIST_PATH_WITHOUT_SUFFIX : &str = "surprise_hist";
     
-    let mut g = original_graph.clone();
+    //let mut g = original_graph.clone();
+    let g = original_graph.clone();
     let mut wtr = Writer::from_path(CSV_PATH_WITH_SUFFIX).unwrap();
 
     // Header
     wtr.write_record(&["surprise"]).unwrap();
 
-    //let _pid_array = [0, 1, 2, 3, 4, o];
-    let _pid_array: [usize; 256] = core::array::from_fn(|i| i + 1);
+    let max_pid;
+    if max_partitions > 0 {
+        max_pid = max_partitions;
+    } else {
+        max_pid = g.node_count();
+    }
 
     let mut best_surprise_so_far: f64 = -1.1;
     for i in 0..num_iterations {
-        set_random_partitions(&mut g, max_partitions);
+        //set_random_partitions(&mut g, max_partitions);
+
+        let _pid_array: [usize; MAX_NUMBER_OF_NODES] = core::array::from_fn(|_| {
+            let mut rng = rand::thread_rng();
+            rng.gen_range(1..=max_pid)
+        });
+
         let s = calculate_surprise(&g, Some(&_pid_array));
-        //let s = calculate_surprise(&g, None);
-        //println!("[evaluate_multiple_random_clusterings]: {}", i);
         if s > best_surprise_so_far {
             if gen_image {
                 visualize_graph(&g);
@@ -344,6 +365,7 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
 
     wtr.flush().unwrap();
     gen_histogram(CSV_PATH_WITH_SUFFIX, HIST_PATH_WITHOUT_SUFFIX);
+    println!("[evaluate_multiple_random_clusterings]: Finished execution.");
 }
 
 #[allow(dead_code)]
@@ -356,7 +378,7 @@ fn gen_sample_graph_image() {
 
 fn test_histogram_01() {
     let g = gen_random_digraph(true, 20, 32);
-    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 100, true);
+    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 50000, true);
 }
 
 fn main() {
