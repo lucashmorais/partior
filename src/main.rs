@@ -94,25 +94,44 @@ fn _gen_sample_graph() -> UnGraph<i32, ()> {
 }
 
 pub trait CanCountInternalLinks {
-    fn internal_edge_count(&self) -> usize;
-    fn calculate_max_internal_links(&self) -> usize;
+    fn internal_edge_count(&self, pid_array: Option<&[usize]>) -> usize;
+    fn calculate_max_internal_links(&self, pid_array: Option<&[usize]>) -> usize;
 }
 
 impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize> {
-    fn internal_edge_count(&self) -> usize {
+    fn internal_edge_count(&self, pid_array: Option<&[usize]>) -> usize {
         let mut num_internal_links : usize = 0;
 
-        for v in self.node_references() {
-            let pid = v.weight().partition_id();
-            //println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
+        if pid_array.is_none() {
+            for v in self.node_references() {
+                let pid = v.weight().partition_id();
+                //println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
 
-            for n in self.neighbors(v.id()) {
-                //println!("[internal_edge_count]: Visiting neighbor {:?}", n);
-                let neighbor_weight = self.node_weight(n).unwrap();
-                let npid = neighbor_weight.partition_id;
-                
-                if  npid == pid {
-                    num_internal_links += 1;
+                for n in self.neighbors(v.id()) {
+                    //println!("[internal_edge_count]: Visiting neighbor {:?}", n);
+                    let neighbor_weight = self.node_weight(n).unwrap();
+                    let npid = neighbor_weight.partition_id;
+                    
+                    if  npid == pid {
+                        num_internal_links += 1;
+                    }
+                }
+            }
+        } else {
+            for v in self.node_references() {
+                let pid_array = pid_array.unwrap();
+
+                let pid = pid_array[v.weight().numerical_id];
+                //println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
+
+                for n in self.neighbors(v.id()) {
+                    //println!("[internal_edge_count]: Visiting neighbor {:?}", n);
+                    let neighbor_weight = self.node_weight(n).unwrap();
+                    let npid = pid_array[neighbor_weight.numerical_id];
+                    
+                    if  npid == pid {
+                        num_internal_links += 1;
+                    }
                 }
             }
         }
@@ -121,20 +140,22 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
         num_internal_links
     }
 
-    fn calculate_max_internal_links(&self) -> usize {
+    fn calculate_max_internal_links(&self, pid_array: Option<&[usize]>) -> usize {
         let mut items_per_partition = HashMap::new();
-
-        for v in self.node_references() {
-            let pid = v.weight().partition_id();
-
-            let hash_count = items_per_partition.entry(pid).or_insert(0);
-            *hash_count += 1;
-        }
-
         let mut max_internal_links = 0;
 
-        for n in items_per_partition.values() {
-            max_internal_links += n * (n - 1) / 2;
+        if pid_array.is_none() {
+            for v in self.node_references() {
+                let pid = v.weight().partition_id();
+
+                let hash_count = items_per_partition.entry(pid).or_insert(0);
+                *hash_count += 1;
+            }
+
+
+            for n in items_per_partition.values() {
+                max_internal_links += n * (n - 1) / 2;
+            }
         }
 
         //println!("[calculate_max_internal_links]: Partition size HashMap: {:?}", items_per_partition);
@@ -146,14 +167,14 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
 
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
 // Better clusterings have a higher surprise value.
-fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> f64 {
+fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
     let num_nodes = g.node_count();
 
     let num_links : u64 = g.edge_count() as u64;
     let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
 
-    let num_internal_links : u64 = g.internal_edge_count() as u64;
-    let num_max_internal_links = g.calculate_max_internal_links() as u64;
+    let num_internal_links : u64 = g.internal_edge_count(pid_array) as u64;
+    let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
 
     let top = min(num_links, num_max_internal_links);
     let mut surprise: f64 = 0.0;
@@ -274,7 +295,7 @@ fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
     let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
     
     let _ = write_to_file(&dot_dump);
-    calculate_surprise(&g);
+    //calculate_surprise(&g);
 }
 
 fn set_random_partitions_and_visualize_graph(graph: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize) -> &Graph<NodeInfo, usize, petgraph::Directed, usize>{
@@ -290,7 +311,7 @@ fn get_equally_hue_spaced_hsv_string(index: usize, num_items: usize) -> String {
     res
 }
 
-fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize, num_iterations: usize) {
+fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize, num_iterations: usize, gen_image: bool) {
     const CSV_PATH_WITH_SUFFIX : &str = "surprise.csv";
     const HIST_PATH_WITHOUT_SUFFIX : &str = "surprise_hist";
     
@@ -300,13 +321,20 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
     // Header
     wtr.write_record(&["surprise"]).unwrap();
 
-    let mut best_surprise_so_far: f64 = -1.0;
+    //let _pid_array = [0, 1, 2, 3, 4, o];
+    let _pid_array: [usize; 256] = core::array::from_fn(|i| i + 1);
+
+    let mut best_surprise_so_far: f64 = -1.1;
     for i in 0..num_iterations {
         set_random_partitions(&mut g, max_partitions);
-        let s = calculate_surprise(&g);
+        let s = calculate_surprise(&g, Some(&_pid_array));
+        //let s = calculate_surprise(&g, None);
         //println!("[evaluate_multiple_random_clusterings]: {}", i);
         if s > best_surprise_so_far {
-            visualize_graph(&g);
+            if gen_image {
+                visualize_graph(&g);
+            }
+
             best_surprise_so_far = s;
             println!("[evaluate_multiple_random_clusterings]: (iteration, best_surprise_so_far): ({}, {})", i, s);
         }
@@ -328,7 +356,7 @@ fn gen_sample_graph_image() {
 
 fn test_histogram_01() {
     let g = gen_random_digraph(true, 20, 32);
-    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 3000000);
+    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 100, true);
 }
 
 fn main() {
