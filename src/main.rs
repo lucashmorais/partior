@@ -168,12 +168,17 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>) -> 
     surprise
 }
 
-fn gen_random_digraph(acyclic: bool) -> petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> {
+fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: usize) -> petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> {
     let mut g = GraphMap::<NodeInfo, usize, petgraph::Directed>::new();
 
     let mut rng = rand::thread_rng();
 
-    let num_nodes: usize = rng.gen_range(1..=20);
+    let num_nodes: usize;
+    if exact_num_nodes == 0 {
+        num_nodes = rng.gen_range(1..=max_num_nodes);
+    } else {
+        num_nodes = exact_num_nodes;
+    }
     let max_num_edges = num_nodes * (num_nodes - 1) / 2;
     let num_edges: usize = rng.gen_range(0..=max_num_edges);
 
@@ -295,10 +300,10 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
     // Header
     wtr.write_record(&["surprise"]).unwrap();
 
-    for _ in 0..num_iterations {
+    for i in 0..num_iterations {
         set_random_partitions(&mut g, max_partitions);
         let s = calculate_surprise(&g);
-        //println!("{}", s);
+        //println!("[evaluate_multiple_random_clusterings]: {}", i);
         if s > -0.001 {
             visualize_graph(&g);
         }
@@ -313,13 +318,13 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
 #[allow(dead_code)]
 fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
-    let mut g = gen_random_digraph(true);
+    let mut g = gen_random_digraph(true, 20, 64);
     let new_graph = set_random_partitions_and_visualize_graph(&mut g, MAX_NUMBER_OF_PARTITIONS);
     visualize_graph(&new_graph);
 }
 
 fn test_histogram_01() {
-    let g = gen_random_digraph(true);
+    let g = gen_random_digraph(true, 20, 16);
     evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 5000);
 }
 
