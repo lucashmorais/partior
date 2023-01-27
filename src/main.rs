@@ -15,7 +15,7 @@ use statrs::function::factorial::binomial;
 use std::collections::HashMap;
 use csv::Writer;
 
-use metaheuristics_nature::{Rga, Fa, Solver};
+use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
@@ -470,7 +470,7 @@ impl ObjFactory for MyFunc<'_> {
     }
 
     fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
-        -calculate_surprise(&self.graph, Some(&x))
+        400. + (-calculate_surprise(&self.graph, Some(&x))).log10()
     }
 }
 
@@ -478,12 +478,19 @@ impl ObjFactory for MyFunc<'_> {
 // https://docs.rs/metaheuristics-nature/8.0.4/metaheuristics_nature/trait.ObjFunc.html
 fn test_metaheuristics_02() {
     let mut report = Vec::with_capacity(20);
-    let g = gen_random_digraph(true, 16, 16);
+    let g = gen_random_digraph(true, 16, 32);
 
 // Build and run the solver
     //let s = Solver::build(Rga::default(), MyFunc{graph: &g})
+    //let s = Solver::build(Pso::default(), MyFunc{graph: &g})
+    //let s = Solver::build(Tlbo::default(), MyFunc{graph: &g})
+
+    //let s = Solver::build(De::default(), MyFunc{graph: &g})
     let s = Solver::build(Fa::default(), MyFunc{graph: &g})
-        .task(|ctx| ctx.gen == 10000)
+        .task(|ctx| ctx.gen == 30)
+        //.pop_num(20)
+        .pop_num(30)
+        //.pop_num(30)
         .callback(|ctx| report.push(ctx.best_f))
         .solve()
         .unwrap();
