@@ -201,19 +201,28 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
     surprise
 }
 
-fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: usize) -> petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> {
+fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Option<usize>, max_num_edges: usize, exact_num_edges: Option<usize>) -> petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> {
     let mut g = GraphMap::<NodeInfo, usize, petgraph::Directed>::new();
-
     let mut rng = rand::thread_rng();
 
     let num_nodes: usize;
-    if exact_num_nodes == 0 {
+    let num_edges: usize;
+
+    if exact_num_nodes.is_none() {
         num_nodes = rng.gen_range(1..=max_num_nodes);
     } else {
-        num_nodes = exact_num_nodes;
+        num_nodes = exact_num_nodes.unwrap();
     }
-    let max_num_edges = num_nodes * (num_nodes - 1) / 2;
-    let num_edges: usize = rng.gen_range(0..=max_num_edges);
+
+    if exact_num_edges.is_none() {
+        if max_num_edges != 0 {
+            num_edges = rng.gen_range(0..=max_num_edges);
+        } else {
+            num_edges = rng.gen_range(0..=(num_nodes * (num_nodes - 1) / 2));
+        }
+    } else {
+        num_edges = exact_num_edges.unwrap();
+    }
 
     println!("Number of nodes: {}", num_nodes);
     println!("Number of edges: {}", num_edges);
@@ -392,14 +401,14 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
 #[allow(dead_code)]
 fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
-    let mut g = gen_random_digraph(true, 20, 64);
+    let mut g = gen_random_digraph(true, 16, Some(16), 0, None);
     let new_graph = set_random_partitions_and_visualize_graph(&mut g, MAX_NUMBER_OF_PARTITIONS);
     visualize_graph(&new_graph, None);
 }
 
 #[allow(dead_code)]
 fn test_histogram_01() {
-    let g = gen_random_digraph(true, 16, 16);
+    let g = gen_random_digraph(true, 16, Some(16), 0, None);
     evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 100000000, true);
 }
 
@@ -427,7 +436,6 @@ fn test_metaheuristics_01() {
 }
 
 use metaheuristics_nature::Bounded;
-use metaheuristics_nature::ObjFunc;
 use metaheuristics_nature::ObjFactory;
 
 struct MyFunc<'a> {
@@ -450,16 +458,6 @@ fn round_float_array(float_arr: &[f64]) -> [usize; MAX_NUMBER_OF_NODES] {
     int_arr
 }
 
-/*
-impl ObjFunc for MyFunc<'_> {
-    type Fitness = f64;
-
-    fn fitness(&self, x: &[f64]) -> Self::Fitness {
-        calculate_surprise(&self.graph, Some(&round_float_array(x)))
-    }
-}
-*/
-
 impl ObjFactory for MyFunc<'_> {
     type Product = [usize; MAX_NUMBER_OF_NODES];
     type Eval = f64;
@@ -478,7 +476,7 @@ impl ObjFactory for MyFunc<'_> {
 // https://docs.rs/metaheuristics-nature/8.0.4/metaheuristics_nature/trait.ObjFunc.html
 fn test_metaheuristics_02() {
     let mut report = Vec::with_capacity(20);
-    let g = gen_random_digraph(true, 16, 32);
+    let g = gen_random_digraph(true, 16, Some(32), 64, Some(96));
 
 // Build and run the solver
     //let s = Solver::build(Rga::default(), MyFunc{graph: &g})
@@ -514,9 +512,82 @@ fn test_metaheuristics_02() {
     visualize_graph(&g, Some(&ans));
 }
 
+fn write_report_and_clear (name: &str, rep: &mut Vec<f64>, f: &mut File) {
+    //f.write(format!("#ALG# {}\n", name).as_bytes()).unwrap();
+    let num_elements = rep.len();
+
+    //for h in &mut *rep {
+    for i in 0..num_elements {
+        let h = rep[i];
+        f.write(format!("{name},{i},{h}\n").as_bytes()).unwrap();
+    }
+    //f.write(format!("\n").as_bytes()).unwrap();
+
+    rep.clear();
+}
+
+#[allow(dead_code)]
+fn test_metaheuristics_03(num_iter: usize) {
+
+    let mut report = Vec::with_capacity(20);
+    let g = gen_random_digraph(true, 16, Some(32), 64, Some(96));
+
+    const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
+
+    let mut f = File::create(TEMP_FILE_NAME).unwrap();
+
+    for _ in 0..num_iter {
+        let _s = Solver::build(Fa::default(), MyFunc{graph: &g})
+            .task(|ctx| ctx.gen == 30)
+            .pop_num(30)
+            .callback(|ctx| report.push(ctx.best_f))
+            .solve()
+            .unwrap();
+
+        write_report_and_clear("Firefly", &mut report, &mut f);
+
+        let _s = Solver::build(De::default(), MyFunc{graph: &g})
+            .task(|ctx| ctx.gen == 30)
+            .pop_num(30)
+            .callback(|ctx| report.push(ctx.best_f))
+            .solve()
+            .unwrap();
+
+        write_report_and_clear("Differential Evolution", &mut report, &mut f);
+
+        let _s = Solver::build(Pso::default(), MyFunc{graph: &g})
+            .task(|ctx| ctx.gen == 30)
+            .pop_num(30)
+            .callback(|ctx| report.push(ctx.best_f))
+            .solve()
+            .unwrap();
+
+        write_report_and_clear("Particle Swarm Optimization", &mut report, &mut f);
+
+        let _s = Solver::build(Rga::default(), MyFunc{graph: &g})
+            .task(|ctx| ctx.gen == 30)
+            .pop_num(30)
+            .callback(|ctx| report.push(ctx.best_f))
+            .solve()
+            .unwrap();
+
+        write_report_and_clear("Real-Coded Genetic Algorithm", &mut report, &mut f);
+
+        let _s = Solver::build(Tlbo::default(), MyFunc{graph: &g})
+            .task(|ctx| ctx.gen == 30)
+            .pop_num(30)
+            .callback(|ctx| report.push(ctx.best_f))
+            .solve()
+            .unwrap();
+
+        write_report_and_clear("Teaching Learning Based Optimization", &mut report, &mut f);
+    }
+}
+
 fn main() {
     //gen_sample_graph_image();
     //test_histogram_01();
     //test_metaheuristics_01();
-    test_metaheuristics_02();
+    //test_metaheuristics_02();
+    test_metaheuristics_03(10);
 }
