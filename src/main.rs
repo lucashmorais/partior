@@ -530,6 +530,19 @@ fn write_report_and_clear (name: &str, rep: &mut Vec<f64>, f: &mut File) {
     rep.clear();
 }
 
+// TODO: Finish this
+// Ref: https://doc.rust-lang.org/reference/macros-by-example.html
+macro_rules! run_algo {
+    ($t:expr, $report:ident, $g:ident) => {
+        let _s = Solver::build($t, MyFunc{graph: &$g})
+            .task(|ctx| ctx.gen == NUM_ITER)
+            .pop_num(POP_SIZE)
+            .callback(|ctx| $report.push(ctx.best_f))
+            .solve()
+            .unwrap();
+    };
+}
+
 #[allow(dead_code)]
 fn test_metaheuristics_03(num_iter: usize) {
 
