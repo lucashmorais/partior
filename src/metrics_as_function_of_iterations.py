@@ -3,6 +3,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
+import pprint
 import csv
 
 if len(sys.argv) <= 2:
@@ -13,6 +14,17 @@ input_path = sys.argv[1]
 output_path = sys.argv[2]
 
 alg_dict = {}
+
+def average(l):
+    return sum(l) / len(l)
+
+def get_average_from_algorithm_iteration(alg_dict, alg, ref_it):
+    d = [alg_dict[alg][1][i] for i in range(len(alg_dict[alg][0])) if alg_dict[alg][0][i] == ref_it]
+    return average(d)
+
+def get_standard_deviation_from_algorithm_iteration(alg_dict, alg, ref_it):
+    d = [alg_dict[alg][1][i] for i in range(len(alg_dict[alg][0])) if alg_dict[alg][0][i] == ref_it]
+    return np.std(d)
 
 with open(input_path, "r") as f:
     reader = csv.reader(f, delimiter=",")
@@ -32,13 +44,32 @@ with open(input_path, "r") as f:
 
     #return filter(lambda x: x[12] in ("00GG", "05FT", "66DM")), list(reader))
 
-print(alg_dict)
+pprint.pprint(alg_dict.keys())
+#pprint.pprint(alg_dict)
+fig, ax = plt.subplots(constrained_layout=True)
+ax2 = ax.twinx()
+ax.set_xlabel('Number of iterations')
+ax.set_ylabel('Surprise (lower is better)')
+ax2.set_ylabel('Standard deviation')
+ax.set_title('Comparing various Surprise optimizers')
 
-plt.scatter(alg_dict["Firefly"][0], alg_dict["Firefly"][1], s=2, label="Firefly")
-plt.scatter(alg_dict["Differential Evolution"][0], alg_dict["Differential Evolution"][1], s=2, label="Differential Evolution")
-plt.legend()
-plt.yscale('log',base=10)
-plt.savefig(f"{output_path}.png", dpi=300)
+for alg in alg_dict.keys():
+    #Raw data
+    #plt.scatter(alg_dict[alg][0], alg_dict[alg][1], s=2, label=alg)
+
+    num_iterations = max(alg_dict[alg][0])
+    x = list(range(num_iterations))
+    y = [get_average_from_algorithm_iteration(alg_dict, alg, i) for i in range(num_iterations)]
+    std = [get_standard_deviation_from_algorithm_iteration(alg_dict, alg, i) for i in range(num_iterations)]
+    ax.scatter(x, y, s=2, label=alg)
+    ax2.plot(x, std, linewidth=0.5, label=alg)
+
+    #plt.scatter(x, y, s=2, label=alg)
+
+ax.legend(loc='lower left')
+ax.set_yscale('log',base=10)
+ax2.set_yscale('log',base=10)
+fig.savefig(f"{output_path}.png", dpi=300)
 
 """
 n, bins, patches = plt.hist(x=d, bins=20, color='#ffb703',
