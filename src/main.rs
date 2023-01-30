@@ -256,6 +256,10 @@ fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Opti
     g
 }
 
+fn gen_scatter_evolution(csv_path_with_suffix: &'static str, image_output_without_suffix: &'static str) {
+    let _dot_proc_output = Command::new("src/metrics_as_function_of_iterations.py").arg(csv_path_with_suffix).arg(image_output_without_suffix).output().unwrap();
+}
+
 fn gen_histogram(csv_path_with_suffix: &'static str, image_output_without_suffix: &'static str) {
     let _dot_proc_output = Command::new("src/histogram.py").arg(csv_path_with_suffix).arg(image_output_without_suffix).output().unwrap();
 }
@@ -582,6 +586,8 @@ fn test_metaheuristics_03(num_iter: usize) {
 
         write_report_and_clear("Teaching Learning Based Optimization", &mut report, &mut f);
     }
+
+    gen_scatter_evolution(TEMP_FILE_NAME, "test");
 }
 
 fn main() {
