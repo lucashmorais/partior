@@ -559,29 +559,49 @@ fn test_metaheuristics_03(num_iter: usize) {
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
 
     let mut f = File::create(TEMP_FILE_NAME).unwrap();
+    const POP_SIZE: usize = 30;
+    const NUM_ITER: u64 = 1000;
+
+    let mut best_surprise_per_algo = HashMap::new();
 
     for _ in 0..num_iter {
+        //run_algo!(Fa::default(), report, g);
         let _s = Solver::build(Fa::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == 30)
-            .pop_num(30)
+            .task(|ctx| ctx.gen == NUM_ITER)
+            .pop_num(POP_SIZE)
             .callback(|ctx| report.push(ctx.best_f))
             .solve()
             .unwrap();
 
         write_report_and_clear("Firefly", &mut report, &mut f);
 
+        let mut algo_best = *best_surprise_per_algo.entry("Firefly").or_insert(400.0);
+
+        if _s.best_fitness() < algo_best {
+            algo_best = _s.best_fitness();
+            visualize_graph(&g, Some(&_s.result()), Some(format!("firefly_{}_{}_{}", POP_SIZE, NUM_ITER, algo_best)));
+        }
+
         let _s = Solver::build(De::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == 30)
-            .pop_num(30)
+            .task(|ctx| ctx.gen == NUM_ITER)
+            .pop_num(POP_SIZE)
             .callback(|ctx| report.push(ctx.best_f))
             .solve()
             .unwrap();
 
         write_report_and_clear("Differential Evolution", &mut report, &mut f);
 
+        let mut algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(400.0);
+
+        if _s.best_fitness() < algo_best {
+            algo_best = _s.best_fitness();
+            visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, NUM_ITER, algo_best)));
+        }
+
+        /*
         let _s = Solver::build(Pso::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == 30)
-            .pop_num(30)
+            .task(|ctx| ctx.gen == NUM_ITER)
+            .pop_num(POP_SIZE)
             .callback(|ctx| report.push(ctx.best_f))
             .solve()
             .unwrap();
@@ -589,8 +609,8 @@ fn test_metaheuristics_03(num_iter: usize) {
         write_report_and_clear("Particle Swarm Optimization", &mut report, &mut f);
 
         let _s = Solver::build(Rga::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == 30)
-            .pop_num(30)
+            .task(|ctx| ctx.gen == NUM_ITER)
+            .pop_num(POP_SIZE)
             .callback(|ctx| report.push(ctx.best_f))
             .solve()
             .unwrap();
@@ -598,13 +618,14 @@ fn test_metaheuristics_03(num_iter: usize) {
         write_report_and_clear("Real-Coded Genetic Algorithm", &mut report, &mut f);
 
         let _s = Solver::build(Tlbo::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == 30)
-            .pop_num(30)
+            .task(|ctx| ctx.gen == NUM_ITER)
+            .pop_num(POP_SIZE)
             .callback(|ctx| report.push(ctx.best_f))
             .solve()
             .unwrap();
 
         write_report_and_clear("Teaching Learning Based Optimization", &mut report, &mut f);
+        */
     }
 
     gen_scatter_evolution(TEMP_FILE_NAME, "test");
