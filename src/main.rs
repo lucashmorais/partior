@@ -70,13 +70,13 @@ const COLORS: &'static [&'static str] = &["#d9ed92", "#b5e48c", "#99d98c", "#76c
 // Otherwise, as it finished, the String value that
 // it would still hold the ownership of would go out
 // of scope and thus be dropped from memory.
-fn write_to_file(s: &String) {
+fn write_to_file(s: &String, output: String) {
     const TEMP_FILE_NAME: &str = "temp.dot";
     let mut f = File::create(TEMP_FILE_NAME).unwrap();
     //println!("{}", s);
     f.write(s.as_bytes()).unwrap();
 
-    gen_graph_image(TEMP_FILE_NAME);
+    gen_graph_image(TEMP_FILE_NAME, output);
 }
 
 // Create an undirected graph with `i32` nodes and edges with `()` associated data.
@@ -264,8 +264,8 @@ fn gen_histogram(csv_path_with_suffix: &'static str, image_output_without_suffix
     let _dot_proc_output = Command::new("src/histogram.py").arg(csv_path_with_suffix).arg(image_output_without_suffix).output().unwrap();
 }
 
-fn gen_graph_image(file_name: &'static str) {
-    let _dot_proc_output = Command::new("dot").arg("-Tpng").arg(file_name).arg("-o").arg("output.png").output().unwrap();
+fn gen_graph_image(file_name: &'static str, output_name: String) {
+    let _dot_proc_output = Command::new("dot").arg("-Tpng").arg(file_name).arg("-o").arg(format!("{output_name}.png")).output().unwrap();
 }
 
 fn set_random_partitions(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize) {
@@ -319,9 +319,16 @@ fn get_number_of_partitions(g: &petgraph::Graph<NodeInfo, usize, petgraph::Direc
     items_per_partition.len()
 }
 
-fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) {
+fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>, output_name: Option<String>) {
     let null_out = |_, _| "".to_string();
     let mut g = g.clone();
+
+    let out_name_unwrapped;
+    if output_name.is_some() {
+        out_name_unwrapped = output_name.unwrap();
+    } else {
+        out_name_unwrapped = "output".to_string();
+    }
         
     //let num_partitions = get_number_of_partitions(g);
     
@@ -346,13 +353,13 @@ fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
 
     let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
     
-    let _ = write_to_file(&dot_dump);
+    let _ = write_to_file(&dot_dump, out_name_unwrapped);
     //calculate_surprise(&g);
 }
 
 fn set_random_partitions_and_visualize_graph(graph: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize) -> &Graph<NodeInfo, usize, petgraph::Directed, usize>{
     set_random_partitions(graph, max_partitions);
-    visualize_graph(&graph, None);
+    visualize_graph(&graph, None, None);
     graph
 }
 
@@ -387,7 +394,7 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
         let s = calculate_surprise(&g, Some(&pid_array));
         if s > best_surprise_so_far {
             if gen_image {
-                visualize_graph(&g, Some(&pid_array));
+                visualize_graph(&g, Some(&pid_array), None);
             }
 
             best_surprise_so_far = s;
@@ -407,7 +414,7 @@ fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
     let mut g = gen_random_digraph(true, 16, Some(16), 0, None);
     let new_graph = set_random_partitions_and_visualize_graph(&mut g, MAX_NUMBER_OF_PARTITIONS);
-    visualize_graph(&new_graph, None);
+    visualize_graph(&new_graph, None, None);
 }
 
 #[allow(dead_code)]
@@ -513,7 +520,7 @@ fn test_metaheuristics_02() {
         println!("{}", h);
     }
 
-    visualize_graph(&g, Some(&ans));
+    visualize_graph(&g, Some(&ans), None);
 }
 
 fn write_report_and_clear (name: &str, rep: &mut Vec<f64>, f: &mut File) {
