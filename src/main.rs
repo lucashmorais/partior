@@ -177,6 +177,36 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize>
     }
 }
 
+#[allow(dead_code)]
+fn half_factorial(a: f64, b: f64) -> f64 {
+    let rounded_a = a.round() as usize;
+    let rounded_b = b.round() as usize;
+    let mut partial = 1.0;
+
+    for i in rounded_a..=rounded_b {
+        partial *= i as f64;
+    }
+
+    partial
+}
+
+fn new_binomial(a_raw: u64, b_raw: u64) -> f64 {
+    // a: large
+    // a: small
+    let mut partial = 1.0;
+
+    if a_raw < b_raw {
+        return -1.0;
+    }
+
+    for i in 0..(a_raw - b_raw) {
+        partial *= (b_raw + 1 + i) as f64;
+        partial /= (1 + i) as f64;
+    }
+
+    partial
+}
+
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
 // Better clusterings have a higher surprise value.
 fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
@@ -192,9 +222,9 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
     let mut surprise: f64 = 0.0;
 
     for j in num_internal_links..=top {
-        surprise -= (binomial(num_max_internal_links, j)) * (binomial(num_max_links - num_max_internal_links, num_links - j));
+        surprise -= (new_binomial(num_max_internal_links, j)) * (new_binomial(num_max_links - num_max_internal_links, num_links - j));
     }
-    surprise /= binomial(num_max_links, num_links);
+    surprise /= new_binomial(num_max_links, num_links);
 
     //println!("Graph surprise: {}", surprise);
 
