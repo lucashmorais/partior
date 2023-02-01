@@ -14,6 +14,7 @@ use std::cmp::min;
 use statrs::function::factorial::binomial;
 use std::collections::HashMap;
 use csv::Writer;
+use std::time::{Duration, Instant};
 
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
@@ -205,6 +206,7 @@ fn new_binomial(a_raw: u64, b_raw: u64) -> f64 {
 
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
 // Better clusterings have a higher surprise value.
+#[allow(dead_code)]
 fn original_calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
     let num_nodes = g.node_count();
 
@@ -228,7 +230,7 @@ fn original_calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, us
 }
 
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
-// Better clusterings have a higher surprise value.
+// Better clusterings have a lower surprise value.
 fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
     let num_nodes = g.node_count();
 
@@ -242,10 +244,9 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
 
     let top = min(num_links, num_max_internal_links);
 
-    //let j = num_internal_links;
-    for j in [(num_internal_links + top) / 2] {
-        surprise += new_binomial(num_max_internal_links, j) + new_binomial(num_max_links - num_max_internal_links, num_links - j);
-    }
+    let j = (num_internal_links + top) / 2;
+    surprise += new_binomial(num_max_internal_links, j) + new_binomial(num_max_links - num_max_internal_links, num_links - j);
+
     //surprise -= new_binomial(num_max_links, num_links);
 
     //println!("Graph surprise: {}", surprise);
@@ -540,17 +541,29 @@ fn round_float_array(float_arr: &[f64]) -> [usize; MAX_NUMBER_OF_NODES] {
     int_arr
 }
 
+fn floor_float_array(float_arr: &[f64]) -> [usize; MAX_NUMBER_OF_NODES] {
+    let mut int_arr: [usize; MAX_NUMBER_OF_NODES] = [0; MAX_NUMBER_OF_NODES];
+
+    for i in 0..float_arr.len() {
+        int_arr[i] = float_arr[i] as usize;
+    }
+
+    int_arr
+}
+
 impl ObjFactory for MyFunc<'_> {
     type Product = [usize; MAX_NUMBER_OF_NODES];
     type Eval = f64;
 
     fn produce(&self, xs: &[f64]) -> Self::Product {
-        round_float_array(xs)
+        //round_float_array(xs)
+        floor_float_array(xs)
     }
 
     fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
-        calculate_surprise(&self.graph, Some(&x))
         //400. + (-original_calculate_surprise(&self.graph, Some(&x))).log10()
+        //1000.0 + calculate_surprise(&self.graph, Some(&x))
+        calculate_surprise(&self.graph, Some(&x))
     }
 }
 
@@ -621,21 +634,50 @@ macro_rules! run_algo {
     };
 }
 
+
+#[derive(Debug)]
+struct ExecutionInfo {
+    exec_time: f64,
+    total_cpu_time: f64,
+    speedup: f64
+}
+
+fn evaluate_execution_time_and_speedup(graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize]) -> ExecutionInfo {
+    let mut next_idle_cycle = [0.0; MAX_NUMBER_OF_PARTITIONS];
+
+    for v in graph.node_weights() {
+        let id = v.numerical_id;
+        let pid = pid_array[id];
+        next_idle_cycle[pid] += 1.0;
+    }
+
+    let exec_time = *next_idle_cycle.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+    let total_cpu_time: f64 = next_idle_cycle.iter().sum();
+    let speedup = total_cpu_time / exec_time;
+
+    //println!("(exec_time, cpu_time, speedup) = ({}, {}, {})", exec_time, total_cpu_time, speedup);
+
+    ExecutionInfo{exec_time, total_cpu_time, speedup}
+}
+
 #[allow(dead_code)]
 fn test_metaheuristics_03(num_iter: usize) {
 
     let mut report = Vec::with_capacity(20);
-    let g = gen_random_digraph(true, 16, Some(64), 64, Some(128), Some(8));
+    let g = gen_random_digraph(true, 16, Some(32), 32, Some(32), Some(8));
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
 
     let mut f = File::create(TEMP_FILE_NAME).unwrap();
-    const POP_SIZE: usize = 30;
-    const NUM_ITER: u64 = 1000;
+    const POP_SIZE: usize = 32;
+    const NUM_ITER: u64 = 100;
 
     let mut best_surprise_per_algo = HashMap::new();
 
     for _ in 0..num_iter {
+        /*
+        let start = Instant::now();
+
         //run_algo!(Fa::default(), report, g);
         let _s = Solver::build(Fa::default(), MyFunc{graph: &g})
             .task(|ctx| ctx.gen == NUM_ITER)
@@ -644,14 +686,21 @@ fn test_metaheuristics_03(num_iter: usize) {
             .solve()
             .unwrap();
 
-        write_report_and_clear("Firefly", &mut report, &mut f);
+        let duration = start.elapsed();
+        println!("Elapsed time (Firefly algorithm): {:?}", duration);
+        println!("Time per iteration: {:?}", duration / (NUM_ITER as u32));
 
-        let mut algo_best = *best_surprise_per_algo.entry("Firefly").or_insert(400.0);
+        //write_report_and_clear("Firefly", &mut report, &mut f);
+
+        let mut algo_best = *best_surprise_per_algo.entry("Firefly").or_insert(f64::MAX);
 
         if _s.best_fitness() < algo_best {
             algo_best = _s.best_fitness();
             visualize_graph(&g, Some(&_s.result()), Some(format!("firefly_{}_{}_{}", POP_SIZE, NUM_ITER, algo_best)));
         }
+        */
+
+        let start = Instant::now();
 
         let _s = Solver::build(De::default(), MyFunc{graph: &g})
             .task(|ctx| ctx.gen == NUM_ITER)
@@ -660,13 +709,18 @@ fn test_metaheuristics_03(num_iter: usize) {
             .solve()
             .unwrap();
 
-        write_report_and_clear("Differential Evolution", &mut report, &mut f);
+        let duration = start.elapsed();
+        println!("Elapsed time (Differential Evolution): {:?}", duration);
+        println!("Time per iteration: {:?}", duration / (NUM_ITER as u32));
 
-        let mut algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(400.0);
+        //write_report_and_clear("Differential Evolution", &mut report, &mut f);
+
+        let mut algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MAX);
 
         if _s.best_fitness() < algo_best {
             algo_best = _s.best_fitness();
             visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, NUM_ITER, algo_best)));
+            println!("{:?}", evaluate_execution_time_and_speedup(&g, &_s.result()));
         }
 
         /*
