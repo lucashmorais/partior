@@ -253,18 +253,30 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
     surprise
 }
 
-fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Option<usize>, max_num_edges: usize, exact_num_edges: Option<usize>) -> petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> {
+fn node_par_region(i: usize, min_parallelism: usize) -> usize {
+    i / min_parallelism
+}
+
+fn first_after_par_region(node_pos: usize, min_parallelism: usize) -> usize {
+    (node_par_region(node_pos, min_parallelism) + 1) * min_parallelism
+}
+
+fn max_edges_for_given_parallelism(num_nodes: usize, min_parallelism: usize) -> usize {
+    let num_complete_groups = num_nodes / min_parallelism;
+    let nodes_per_complete_group = min_parallelism;
+    let nodes_in_incomplete_group = num_nodes % min_parallelism;
+
+    num_complete_groups * (nodes_per_complete_group * (nodes_per_complete_group / 2)) + (nodes_in_incomplete_group * (nodes_in_incomplete_group) / 2)
+}
+
+fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Option<usize>, max_num_edges: usize, exact_num_edges: Option<usize>, min_parallelism: Option<usize>) -> petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> {
     let mut g = GraphMap::<NodeInfo, usize, petgraph::Directed>::new();
     let mut rng = rand::thread_rng();
 
-    let num_nodes: usize;
     let num_edges: usize;
 
-    if exact_num_nodes.is_none() {
-        num_nodes = rng.gen_range(1..=max_num_nodes);
-    } else {
-        num_nodes = exact_num_nodes.unwrap();
-    }
+    let num_nodes = exact_num_nodes.unwrap_or(rng.gen_range(1..=max_num_nodes));
+    let min_parallelism = min_parallelism.unwrap_or(1);
 
     if exact_num_edges.is_none() {
         if max_num_edges != 0 {
@@ -283,7 +295,10 @@ fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Opti
         g.add_node(NodeInfo{numerical_id: i, partition_id: 0});
     }
 
-    for i in 0..num_edges {
+    assert!(num_edges <= max_edges_for_given_parallelism(num_nodes, min_parallelism));
+
+    while g.edge_count() < num_edges {
+        let i = g.edge_count();
         // These do not need to be
         // mutable beceause we are
         // only assinging any value
@@ -296,7 +311,11 @@ fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Opti
             b = rng.gen_range(0..num_nodes);
         } else {
             a = rng.gen_range(0..num_nodes - 1);
-            b = rng.gen_range(a+1..num_nodes);
+            let first_option = first_after_par_region(a, min_parallelism);
+            if num_nodes - first_option <= 0 {
+                continue;
+            }
+            b = rng.gen_range(first_option..num_nodes);
         }
 
         g.add_edge(NodeInfo {numerical_id: a, partition_id: 0}, NodeInfo {numerical_id: b, partition_id: 0}, i);
@@ -464,14 +483,14 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
 #[allow(dead_code)]
 fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
-    let mut g = gen_random_digraph(true, 16, Some(16), 0, None);
+    let mut g = gen_random_digraph(true, 16, Some(16), 0, None, None);
     let new_graph = set_random_partitions_and_visualize_graph(&mut g, MAX_NUMBER_OF_PARTITIONS);
     visualize_graph(&new_graph, None, None);
 }
 
 #[allow(dead_code)]
 fn test_histogram_01() {
-    let g = gen_random_digraph(true, 16, Some(16), 0, None);
+    let g = gen_random_digraph(true, 16, Some(16), 0, None, None);
     evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 100000000, true);
 }
 
@@ -539,7 +558,7 @@ impl ObjFactory for MyFunc<'_> {
 // https://docs.rs/metaheuristics-nature/8.0.4/metaheuristics_nature/trait.ObjFunc.html
 fn test_metaheuristics_02() {
     let mut report = Vec::with_capacity(20);
-    let g = gen_random_digraph(true, 16, Some(32), 64, Some(96));
+    let g = gen_random_digraph(true, 16, Some(32), 64, Some(96), None);
 
 // Build and run the solver
     //let s = Solver::build(Rga::default(), MyFunc{graph: &g})
@@ -606,7 +625,7 @@ macro_rules! run_algo {
 fn test_metaheuristics_03(num_iter: usize) {
 
     let mut report = Vec::with_capacity(20);
-    let g = gen_random_digraph(true, 16, Some(32), 64, Some(96));
+    let g = gen_random_digraph(true, 16, Some(64), 64, Some(128), Some(8));
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
 
