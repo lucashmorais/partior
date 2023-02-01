@@ -19,7 +19,7 @@ use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
-const MAX_NUMBER_OF_NODES: usize = 64;
+const MAX_NUMBER_OF_NODES: usize = 256;
 
 /*
 use num_integer::binomial;
@@ -193,18 +193,38 @@ fn half_factorial(a: f64, b: f64) -> f64 {
 fn new_binomial(a_raw: u64, b_raw: u64) -> f64 {
     // a: large
     // a: small
-    let mut partial = 1.0;
-
-    if a_raw < b_raw {
-        return -1.0;
-    }
+    let mut partial = 0.0;
 
     for i in 0..(a_raw - b_raw) {
-        partial *= (b_raw + 1 + i) as f64;
-        partial /= (1 + i) as f64;
+        partial += ((b_raw + 1 + i) as f64).log10();
+        partial -= ((1 + i) as f64).log10();
     }
 
     partial
+}
+
+// Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
+// Better clusterings have a higher surprise value.
+fn original_calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
+    let num_nodes = g.node_count();
+
+    let num_links : u64 = g.edge_count() as u64;
+    let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
+
+    let num_internal_links : u64 = g.internal_edge_count(pid_array) as u64;
+    let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
+
+    let top = min(num_links, num_max_internal_links);
+    let mut surprise: f64 = 0.0;
+
+    for j in num_internal_links..=top {
+        surprise -= (binomial(num_max_internal_links, j)) * (binomial(num_max_links - num_max_internal_links, num_links - j));
+    }
+    surprise /= binomial(num_max_links, num_links);
+
+    //println!("Graph surprise: {}", surprise);
+
+    surprise
 }
 
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
@@ -218,13 +238,15 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
     let num_internal_links : u64 = g.internal_edge_count(pid_array) as u64;
     let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
 
-    let top = min(num_links, num_max_internal_links);
     let mut surprise: f64 = 0.0;
 
-    for j in num_internal_links..=top {
-        surprise -= (new_binomial(num_max_internal_links, j)) * (new_binomial(num_max_links - num_max_internal_links, num_links - j));
+    let top = min(num_links, num_max_internal_links);
+
+    //let j = num_internal_links;
+    for j in [(num_internal_links + top) / 2] {
+        surprise += new_binomial(num_max_internal_links, j) + new_binomial(num_max_links - num_max_internal_links, num_links - j);
     }
-    surprise /= new_binomial(num_max_links, num_links);
+    //surprise -= new_binomial(num_max_links, num_links);
 
     //println!("Graph surprise: {}", surprise);
 
@@ -504,12 +526,12 @@ impl ObjFactory for MyFunc<'_> {
     type Eval = f64;
 
     fn produce(&self, xs: &[f64]) -> Self::Product {
-        let mut pid_array = [0; 64];
         round_float_array(xs)
     }
 
     fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
-        400. + (-calculate_surprise(&self.graph, Some(&x))).log10()
+        calculate_surprise(&self.graph, Some(&x))
+        //400. + (-original_calculate_surprise(&self.graph, Some(&x))).log10()
     }
 }
 
