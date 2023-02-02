@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 csv = "1.1.6"
 metaheuristics-nature = { version = "8.0.4", features = ["rayon"] }
+#metaheuristics-nature = { version = "8.0.4" }
 num = "0.4.0"
 num-integer = "0.1.45"
 petgraph = "0.6.2"
