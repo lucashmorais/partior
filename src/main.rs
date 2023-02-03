@@ -785,7 +785,7 @@ fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
     let mut min_step_for_more_retirements = usize::MAX;
 
     //println!("[retire_finished_tasks]: Before: {:?}", core_states);
-    println!("[retire_finished_tasks]: Graph before: {:?}", g);
+    //println!("[retire_finished_tasks]: Graph before: {:?}", g);
 
     // We reborrow here just to avoid moving
     // core_states to the score of the for,
@@ -817,7 +817,7 @@ fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
     }
 
     //println!("[retire_finished_tasks]: After: {:?}", core_states);
-    println!("[retire_finished_tasks]: Graph after: {:?}", g);
+    //println!("[retire_finished_tasks]: Graph after: {:?}", g);
 
     if min_step_for_more_retirements < usize::MAX {
         return Some(min_step_for_more_retirements);
@@ -827,8 +827,8 @@ fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
 }
 
 fn advance_simulation(step_size: usize, core_states: &mut Vec<Option<ExecutionUnit>>) {
-    println!("[advance_simulation]: step_size = {}", step_size);
-    println!("Before: {:?}", core_states);
+    //println!("[advance_simulation]: step_size = {}", step_size);
+    //println!("Before: {:?}", core_states);
 
     for s_wrapped in &mut *core_states {
         if s_wrapped.is_some() {
@@ -839,7 +839,7 @@ fn advance_simulation(step_size: usize, core_states: &mut Vec<Option<ExecutionUn
         }
     }
 
-    println!("After: {:?}", core_states);
+    //println!("After: {:?}", core_states);
 }
 
 fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut Vec<Option<ExecutionUnit>>) {
@@ -862,9 +862,9 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
     let mut current_time = 0;
     let total_cpu_time = original_graph.node_count() * TASK_SIZE;
 
-    let mut i = 0;
     while g.node_count() > 0 {
-    //while i < 3 {
+        // TODO-PERFORMANCE: Avoid parsing the whole graph for detecting 0-dep tasks at every
+        // iteration
         let mut dep_counts = get_num_pending_deps(&g);
         let free_task_indices = get_indices_of_free_tasks(&dep_counts);
         //move_free_tasks_to_ready_queues(&free_task_indices, &mut ready_queues, pid_array, &g);
@@ -873,8 +873,6 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
         feed_idle_cores(&mut ready_queues, &mut core_states);
         advance_simulation(min_step_for_more_retirements, &mut core_states);
         current_time += min_step_for_more_retirements;
-        i += 1;
-        println!();
     }
 
     return ExecutionInfo{exec_time: current_time, total_cpu_time, speedup: (total_cpu_time as f64 / (current_time as f64))};
@@ -884,7 +882,9 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
 fn test_metaheuristics_03(num_iter: usize) {
 
     let mut report = Vec::with_capacity(20);
+    let start = Instant::now();
     let g = gen_random_digraph(true, 16, Some(64), 32, Some(32), Some(8));
+    println!("Time to generate random graph: {:?}", start.elapsed());
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
 
@@ -939,8 +939,12 @@ fn test_metaheuristics_03(num_iter: usize) {
 
         if _s.best_fitness() < algo_best {
             algo_best = _s.best_fitness();
+            let start = Instant::now();
             visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, NUM_ITER, algo_best)));
+            println!("Time to generate graph visualization: {:?}", start.elapsed());
+            let start = Instant::now();
             println!("{:?}", evaluate_execution_time_and_speedup(&g, &_s.result()));
+            println!("Time to simulate execution: {:?}", start.elapsed());
         }
 
         /*
@@ -973,7 +977,9 @@ fn test_metaheuristics_03(num_iter: usize) {
         */
     }
 
+    let start = Instant::now();
     gen_scatter_evolution(TEMP_FILE_NAME, "test");
+    println!("Time to generate surprise evolution graph: {:?}", start.elapsed());
 }
 
 fn main() {
