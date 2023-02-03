@@ -267,7 +267,15 @@ fn max_edges_for_given_parallelism(num_nodes: usize, min_parallelism: usize) -> 
     let nodes_per_complete_group = min_parallelism;
     let nodes_in_incomplete_group = num_nodes % min_parallelism;
 
-    num_complete_groups * (nodes_per_complete_group * (nodes_per_complete_group / 2)) + (nodes_in_incomplete_group * (nodes_in_incomplete_group) / 2)
+    let res = (num_complete_groups * nodes_per_complete_group * (num_nodes - nodes_per_complete_group) + nodes_in_incomplete_group * (num_nodes - nodes_in_incomplete_group)) / 2;
+
+    println!("[max_edges_for_given_parallelism]: (num_complete_groups, nodes_per_complete_group, nodes_in_incomplete_group, max_edges) = ({}, {}, {}, {})",
+        num_complete_groups,
+        nodes_per_complete_group,
+        nodes_in_incomplete_group,
+        res);
+
+    res
 }
 
 fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Option<usize>, max_num_edges: usize, exact_num_edges: Option<usize>, min_parallelism: Option<usize>) -> petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> {
@@ -674,54 +682,12 @@ fn find_earlier_task_start_time_and_index(v: &[usize], minimum_task_start_time: 
     res
 }
 
-fn old_evaluate_execution_time_and_speedup(graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize]) -> ExecutionInfo {
-    let mut next_idle_cycle = [0; MAX_NUMBER_OF_PARTITIONS];
-    let mut minimum_task_start_time = [0; MAX_NUMBER_OF_NODES];
-
-    const TASK_SIZE: usize = 2;
-    const COMM_PENALTY: usize = 1;
-
-    let mut remaining_nodes = graph.node_count();
-
-    while remaining_nodes > 0 {
-        let start_time;
-        let core_id;
-        (start_time, core_id) = find_min_and_index(next_idle_cycle.iter());
-
-        //(task_start_time, task_id)
-    }
-
-    for v in graph.node_references() {
-        let id = v.weight().numerical_id;
-        let pid = pid_array[id];
-
-        //println!("{:?}, {}", v.weight().numerical_id, pid);
-
-        for n in graph.neighbors_directed(v.id(), petgraph::Outgoing) {
-            let nw = graph.node_weight(n).unwrap();
-            let nid = nw.numerical_id;
-            let npid = pid_array[nid];
-            //println!("{:?}, {}", nid, npid);
-        }
-
-        //println!();
-    }
-
-    let exec_time = *next_idle_cycle.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-    let total_cpu_time = next_idle_cycle.iter().sum();
-    let speedup = (total_cpu_time as f64) / (exec_time as f64);
-
-    //println!("(exec_time, cpu_time, speedup) = ({}, {}, {})", exec_time, total_cpu_time, speedup);
-
-    ExecutionInfo{exec_time, total_cpu_time, speedup}
-}
-
 #[allow(dead_code)]
 #[derive(Debug,Clone,Copy)]
 struct ExecutionUnit {
     remaining_work: usize,
     pid: usize,
-    current_task_node: Option<petgraph::graph::NodeIndex<usize>>
+    current_task_node: Option<usize>
 }
 
 fn get_empty_ready_task_queues(num_cores: usize) -> Vec<Vec<ExecutionUnit>> {
@@ -761,17 +727,31 @@ fn get_indices_of_free_tasks(dep_counts: &Vec<usize>) -> Vec<usize> {
     res
 }
 
-const TASK_SIZE: usize = 2;
+const TASK_SIZE: usize = 10;
 const COMM_PENALTY: usize = 1;
 
-fn move_free_tasks_to_ready_queues(free_task_indices: &Vec<usize>, ready_queues: &mut Vec<Vec<ExecutionUnit>>, pid_array: &[usize], g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) {
-    let node_indices: Vec<(petgraph::prelude::NodeIndex<usize>, &NodeInfo)> = g.node_references().collect();
+//TODO-PERFORMANCE: AVOID RECALCULATION
+fn move_free_tasks_to_ready_queues(ready_queues: &mut Vec<Vec<ExecutionUnit>>, pid_array: &[usize], g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) {
+    let dep_counts = get_num_pending_deps(&g);
+    let free_task_indices = &get_indices_of_free_tasks(&dep_counts);
+
+    let mut pending_removals: Vec<usize> = vec![];
 
     for i in free_task_indices {
         let pid = pid_array[*i];
+        let nid = g.raw_nodes()[*i].weight.numerical_id;
 
-        ready_queues[pid].push(ExecutionUnit{remaining_work: TASK_SIZE, pid, current_task_node: Some(node_indices[*i].0)});
-        //ready_queues[pid].push(ExecutionUnit{remaining_work: TASK_SIZE, pid, current_task_node: Some(node_indices[*i].0)});
+        let e = ExecutionUnit{remaining_work: TASK_SIZE, pid, current_task_node: Some(nid)};
+
+        //println!("[move_free_tasks_to_ready_queues]: e = {:?}", e);
+
+        ready_queues[pid].push(e);
+        pending_removals.push(nid);
+    }
+
+    for nid in pending_removals {
+        let v = g.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
+        g.remove_node(v);
     }
 }
 
@@ -781,33 +761,22 @@ fn move_free_tasks_to_ready_queues(free_task_indices: &Vec<usize>, ready_queues:
 // possible.
 // TODO: Let it update dep_counts in a way that is compatible with the changing number of nodes in
 // the graph
-fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, core_states: &mut Vec<Option<ExecutionUnit>>, dep_counts: &mut Vec<usize>) -> Option<usize> {
+fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, core_states: &mut Vec<Option<ExecutionUnit>>) -> Option<usize> {
     let mut min_step_for_more_retirements = usize::MAX;
 
-    //println!("[retire_finished_tasks]: Before: {:?}", core_states);
-    //println!("[retire_finished_tasks]: Graph before: {:?}", g);
 
     // We reborrow here just to avoid moving
     // core_states to the score of the for,
     // which would prevent us from using it
     // down later.
-    for e in &mut *core_states {
+    //println!("[retire_finished_tasks]: core_states before: {:?}", core_states);
+    for (i, e) in core_states.iter_mut().enumerate() {
         if e.is_some() {
             let e_unwrapped = e.unwrap();
             let remaining_work = e_unwrapped.remaining_work;
 
             if remaining_work == 0 {
-                let v = e_unwrapped.current_task_node.unwrap();
-                
-                for n in g.neighbors_directed(v, petgraph::Outgoing) {
-                    let nw = g.node_weight(n).unwrap();
-                    let nid = nw.numerical_id;
-                    //dep_counts[nid] = dep_counts[nid] - 1;
-                }
-                
                 *e = None;
-
-                g.remove_node(v);
             } else {
                 if remaining_work < min_step_for_more_retirements {
                     min_step_for_more_retirements = remaining_work;
@@ -815,9 +784,8 @@ fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
             }
         }
     }
+    //println!("[retire_finished_tasks]: core_states after: {:?}", core_states);
 
-    //println!("[retire_finished_tasks]: After: {:?}", core_states);
-    //println!("[retire_finished_tasks]: Graph after: {:?}", g);
 
     if min_step_for_more_retirements < usize::MAX {
         return Some(min_step_for_more_retirements);
@@ -842,16 +810,57 @@ fn advance_simulation(step_size: usize, core_states: &mut Vec<Option<ExecutionUn
     //println!("After: {:?}", core_states);
 }
 
+fn get_task_from_fullest_queue(ready_queues: &mut Vec<Vec<ExecutionUnit>>) -> Option<ExecutionUnit> {
+    let mut max_num_elements = 0;
+    let mut index_max_elements = 0;
+
+    //println!("[get_task_from_fullest_queue]: (index_max_elements, max_num_elements) = ({}, {})", index_max_elements, max_num_elements);
+
+    for (i, q) in ready_queues.iter().enumerate() {
+        let num_elements = q.len();
+        if num_elements > max_num_elements {
+            max_num_elements = num_elements;
+            index_max_elements = i;
+        }
+    }
+
+    ready_queues[index_max_elements].pop()
+}
+
 fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut Vec<Option<ExecutionUnit>>) {
     let mut i = 0;
     for s_wrapped in &mut *core_states {
         if s_wrapped.is_none() {
-            let w = ready_queues[i].pop();
+            let vl = ready_queues[i].len();
+            let mut w = ready_queues[i].pop();
+            assert!(vl == 0 || (ready_queues[i].len() == vl - 1));
+
+            //println!("[feed_idle_cores]: popped task: {:?}", w);
+            if w.is_none() {
+                w = get_task_from_fullest_queue(ready_queues);
+
+                if w.is_some() {
+                    let mut w_unwrapped = w.unwrap().clone();
+                    w_unwrapped.remaining_work += COMM_PENALTY;
+                    w = Some(w_unwrapped);
+                }
+            }
+
             *s_wrapped = w;
         }
 
         i += 1;
     }
+}
+
+fn all_ready_queues_are_empty(ready_queues: &Vec<Vec<ExecutionUnit>>) -> bool {
+    for q in ready_queues {
+        if q.len() > 0 {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize]) -> ExecutionInfo {
@@ -862,15 +871,12 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
     let mut current_time = 0;
     let total_cpu_time = original_graph.node_count() * TASK_SIZE;
 
-    while g.node_count() > 0 {
+    while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) {
         // TODO-PERFORMANCE: Avoid parsing the whole graph for detecting 0-dep tasks at every
         // iteration
-        let mut dep_counts = get_num_pending_deps(&g);
-        let free_task_indices = get_indices_of_free_tasks(&dep_counts);
-        //move_free_tasks_to_ready_queues(&free_task_indices, &mut ready_queues, pid_array, &g);
-        move_free_tasks_to_ready_queues(&free_task_indices, &mut ready_queues, pid_array, &g);
-        let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states, &mut dep_counts).unwrap_or(0);
+        move_free_tasks_to_ready_queues(&mut ready_queues, pid_array, &mut g);
         feed_idle_cores(&mut ready_queues, &mut core_states);
+        let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states).unwrap_or(0);
         advance_simulation(min_step_for_more_retirements, &mut core_states);
         current_time += min_step_for_more_retirements;
     }
@@ -883,7 +889,7 @@ fn test_metaheuristics_03(num_iter: usize) {
 
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
-    let g = gen_random_digraph(true, 16, Some(64), 32, Some(32), Some(8));
+    let g = gen_random_digraph(true, 16, Some(32), 32, Some(96), Some(8));
     println!("Time to generate random graph: {:?}", start.elapsed());
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
@@ -893,6 +899,8 @@ fn test_metaheuristics_03(num_iter: usize) {
     const NUM_ITER: u64 = 1000;
 
     let mut best_surprise_per_algo = HashMap::new();
+
+    let mut speedup_sum = 0.0;
 
     for _ in 0..num_iter {
         /*
@@ -940,10 +948,12 @@ fn test_metaheuristics_03(num_iter: usize) {
         if _s.best_fitness() < algo_best {
             algo_best = _s.best_fitness();
             let start = Instant::now();
-            visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, NUM_ITER, algo_best)));
+            //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, NUM_ITER, algo_best)));
             println!("Time to generate graph visualization: {:?}", start.elapsed());
             let start = Instant::now();
-            println!("{:?}", evaluate_execution_time_and_speedup(&g, &_s.result()));
+            let execution_info = evaluate_execution_time_and_speedup(&g, &_s.result());
+            speedup_sum += execution_info.speedup;
+            println!("{:?}", execution_info);
             println!("Time to simulate execution: {:?}", start.elapsed());
         }
 
@@ -977,8 +987,10 @@ fn test_metaheuristics_03(num_iter: usize) {
         */
     }
 
+    println!("Average speedup: {}", speedup_sum / num_iter as f64);
+
     let start = Instant::now();
-    gen_scatter_evolution(TEMP_FILE_NAME, "test");
+    //gen_scatter_evolution(TEMP_FILE_NAME, "test");
     println!("Time to generate surprise evolution graph: {:?}", start.elapsed());
 }
 
@@ -987,7 +999,7 @@ fn main() {
     //test_histogram_01();
     //test_metaheuristics_01();
     //test_metaheuristics_02();
-    test_metaheuristics_03(1);
+    test_metaheuristics_03(100);
     
     /*
     for i in [1,2,3] {
