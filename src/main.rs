@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
-const MAX_NUMBER_OF_PARTITIONS: usize = 8;
-const MAX_NUMBER_OF_NODES: usize = 256;
+const MAX_NUMBER_OF_PARTITIONS: usize = 2;
+const MAX_NUMBER_OF_NODES: usize = 512;
 
 /*
 use num_integer::binomial;
@@ -229,6 +229,35 @@ fn original_calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, us
     surprise
 }
 
+fn calculate_pid_array_min_max_distance(pid_array: Option<&[usize]>, num_nodes: usize) -> f64 {
+    let mut num_items_per_pid: HashMap<usize, usize> = HashMap::new();
+    let pid_array = pid_array.unwrap();
+
+    for pid in 0..num_nodes {
+        num_items_per_pid.insert(pid, 1);
+    }
+
+    for i in 0..num_nodes {
+        let pid = &pid_array[i];
+        let current_num = num_items_per_pid.get(pid).unwrap();
+        num_items_per_pid.insert(*pid, current_num + 1);
+    }
+
+    let mut min = usize::MAX;
+    let mut max = usize::MIN;
+    for v in num_items_per_pid.values() {
+        if *v < min {
+            min = *v;
+        }
+
+        if *v > max {
+            max = *v;
+        }
+    }
+
+    (max - min) as f64 / MAX_NUMBER_OF_NODES as f64
+}
+
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
 // Better clusterings have a lower surprise value.
 fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
@@ -250,8 +279,10 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
     //surprise -= new_binomial(num_max_links, num_links);
 
     //println!("Graph surprise: {}", surprise);
+    
+    //surprise = surprise + calculate_pid_array_min_max_distance(pid_array, num_nodes);
 
-    surprise
+    surprise 
 }
 
 fn node_par_region(i: usize, min_parallelism: usize) -> usize {
@@ -324,7 +355,8 @@ fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Opti
             if num_nodes - first_option <= 0 {
                 continue;
             }
-            b = rng.gen_range(first_option..num_nodes);
+            b = rng.gen_range(first_option..first_option+5);
+            //b = rng.gen_range(first_option..num_nodes);
         }
 
         g.add_edge(NodeInfo {numerical_id: a, partition_id: 0}, NodeInfo {numerical_id: b, partition_id: 0}, i);
@@ -727,8 +759,10 @@ fn get_indices_of_free_tasks(dep_counts: &Vec<usize>) -> Vec<usize> {
     res
 }
 
-const TASK_SIZE: usize = 10;
-const COMM_PENALTY: usize = 1;
+const TASK_SIZE: usize = 1;
+const COMM_PENALTY: usize = 2;
+const SHARING_THRESHOLD: usize = 0;
+//const SHARING_THRESHOLD: usize = usize::MAX;
 
 //TODO-PERFORMANCE: AVOID RECALCULATION
 fn move_free_tasks_to_ready_queues(ready_queues: &mut Vec<Vec<ExecutionUnit>>, pid_array: &[usize], g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) {
@@ -824,32 +858,113 @@ fn get_task_from_fullest_queue(ready_queues: &mut Vec<Vec<ExecutionUnit>>) -> Op
         }
     }
 
-    ready_queues[index_max_elements].pop()
+    if ready_queues[index_max_elements].len() > SHARING_THRESHOLD {
+        return ready_queues[index_max_elements].pop();
+    }
+
+    None
 }
 
-fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut Vec<Option<ExecutionUnit>>) {
-    let mut i = 0;
-    for s_wrapped in &mut *core_states {
-        if s_wrapped.is_none() {
-            let vl = ready_queues[i].len();
-            let mut w = ready_queues[i].pop();
-            assert!(vl == 0 || (ready_queues[i].len() == vl - 1));
+fn num_foreign_incoming_edges(nid: usize, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, target_core: usize, finalized_core_placements: &mut [usize]) -> usize {
+    let original_v = original_graph.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
 
-            //println!("[feed_idle_cores]: popped task: {:?}", w);
-            if w.is_none() {
-                w = get_task_from_fullest_queue(ready_queues);
+    let mut num_foreign_edges = 0;
+    for n in original_graph.neighbors_directed(original_v, petgraph::Incoming) {
+        let n_nid = original_graph.node_weight(n).unwrap().numerical_id;
+        let n_finalized_core = finalized_core_placements[n_nid];
 
+        if n_finalized_core != target_core {
+            num_foreign_edges += 1;
+            //println!("[num_foreign_incoming_edges]: (nid, n_nid, target_core, n_finalized_core) = ({}, {}, {}, {})", nid, n_nid, target_core, n_finalized_core);
+        }
+    }
+
+    num_foreign_edges
+}
+
+fn num_native_edges(nid: usize, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [usize]) -> usize {
+    let original_v = original_graph.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
+    let original_pid = original_graph.node_weight(original_v).unwrap().partition_id;
+
+    let mut num_native_edges = 0;
+
+    for n in original_graph.neighbors_directed(original_v, petgraph::Incoming) {
+        let n_nid = original_graph.node_weight(n).unwrap().numerical_id;
+        let n_finalized_core = finalized_core_placements[n_nid];
+
+        if n_finalized_core == original_pid {
+            num_native_edges += 1;
+            //println!("[num_native_incoming_edges]: (nid, n_nid, original_pid, n_finalized_core) = ({}, {}, {}, {})", nid, n_nid, original_pid, n_finalized_core);
+        }
+    }
+
+    for n in original_graph.neighbors_directed(original_v, petgraph::Outgoing) {
+        //let n_nid = original_graph.node_weight(n).unwrap().numerical_id;
+        let n_pid = original_graph.node_weight(n).unwrap().partition_id;
+
+        if n_pid == original_pid {
+            num_native_edges += 1;
+            //println!("[num_native_incoming_edges]: (nid, n_nid, original_pid, n_finalized_core) = ({}, {}, {}, {})", nid, n_nid, original_pid, n_finalized_core);
+        }
+    }
+
+    num_native_edges
+}
+
+fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, target_core: usize, finalized_core_placements: &mut [usize]) -> Option<ExecutionUnit> {
+    let mut lowest = usize::MAX;
+    let mut li = 0;
+    let mut lj = 0;
+
+    for (i, q) in ready_queues.into_iter().enumerate() {
+        for (j, e) in q.into_iter().enumerate() {
+            let cluster_degree = num_native_edges(e.current_task_node.unwrap(), original_graph, finalized_core_placements);
+
+            if cluster_degree < lowest {
+                lowest = cluster_degree;
+                li = i;
+                lj = j;
+            }
+        }
+    }
+
+    if lowest < usize::MAX {
+        return Some(ready_queues[li].remove(lj));
+    }
+
+    None
+}
+
+fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut Vec<Option<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [usize]) {
+    for steal in [false, true] {
+        let mut i = 0;
+        for s_wrapped in &mut *core_states {
+            if s_wrapped.is_none() {
+                //let vl = ready_queues[i].len();
+                let mut w = ready_queues[i].pop();
+                //assert!(vl == 0 || (ready_queues[i].len() == vl - 1));
+
+                //println!("[feed_idle_cores]: popped task: {:?}", w);
+                
+                if steal && w.is_none() {
+                    //w = get_task_from_fullest_queue(ready_queues);
+                    w = get_task_with_lowest_cluster_degree(ready_queues, original_graph, i, finalized_core_placements);
+                }
+
+                // This cannot be an else statement
                 if w.is_some() {
                     let mut w_unwrapped = w.unwrap().clone();
-                    w_unwrapped.remaining_work += COMM_PENALTY;
+                    let nid = w_unwrapped.current_task_node.unwrap();
+                    finalized_core_placements[nid] = i;
+                    w_unwrapped.remaining_work += COMM_PENALTY * num_foreign_incoming_edges(nid, original_graph, i, finalized_core_placements);
                     w = Some(w_unwrapped);
                 }
+
+                *s_wrapped = w;
             }
 
-            *s_wrapped = w;
+            i += 1;
         }
-
-        i += 1;
     }
 }
 
@@ -869,13 +984,14 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
 
     let mut g = original_graph.clone();
     let mut current_time = 0;
+    let mut finalized_core_placements = [0; MAX_NUMBER_OF_NODES];
     let total_cpu_time = original_graph.node_count() * TASK_SIZE;
 
     while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) {
         // TODO-PERFORMANCE: Avoid parsing the whole graph for detecting 0-dep tasks at every
         // iteration
         move_free_tasks_to_ready_queues(&mut ready_queues, pid_array, &mut g);
-        feed_idle_cores(&mut ready_queues, &mut core_states);
+        feed_idle_cores(&mut ready_queues, &mut core_states, &original_graph, &mut finalized_core_placements);
         let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states).unwrap_or(0);
         advance_simulation(min_step_for_more_retirements, &mut core_states);
         current_time += min_step_for_more_retirements;
@@ -889,105 +1005,113 @@ fn test_metaheuristics_03(num_iter: usize) {
 
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
-    let g = gen_random_digraph(true, 16, Some(32), 32, Some(96), Some(8));
+    let g = gen_random_digraph(true, 16, Some(256), 32, Some(1024), Some(16));
     println!("Time to generate random graph: {:?}", start.elapsed());
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
     const POP_SIZE: usize = 32;
-    const NUM_ITER: u64 = 1000;
 
     let mut best_surprise_per_algo = HashMap::new();
 
-    let mut speedup_sum = 0.0;
+    let mut average_speedups: Vec<f64> = vec![];
 
-    for _ in 0..num_iter {
-        /*
-        let start = Instant::now();
+    for num_generations in [0, 10, 100, 4000] {
+        let mut speedup_sum = 0.0;
 
-        //run_algo!(Fa::default(), report, g);
-        let _s = Solver::build(Fa::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == NUM_ITER)
-            .pop_num(POP_SIZE)
-            .callback(|ctx| report.push(ctx.best_f))
-            .solve()
-            .unwrap();
-
-        let duration = start.elapsed();
-        println!("Elapsed time (Firefly algorithm): {:?}", duration);
-        println!("Time per iteration: {:?}", duration / (NUM_ITER as u32));
-
-        //write_report_and_clear("Firefly", &mut report, &mut _f);
-
-        let mut algo_best = *best_surprise_per_algo.entry("Firefly").or_insert(f64::MAX);
-
-        if _s.best_fitness() < algo_best {
-            algo_best = _s.best_fitness();
-            visualize_graph(&g, Some(&_s.result()), Some(format!("firefly_{}_{}_{}", POP_SIZE, NUM_ITER, algo_best)));
-        }
-        */
-
-        let start = Instant::now();
-
-        let _s = Solver::build(De::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == NUM_ITER)
-            .pop_num(POP_SIZE)
-            .callback(|ctx| report.push(ctx.best_f))
-            .solve()
-            .unwrap();
-
-        let duration = start.elapsed();
-        println!("Elapsed time (Differential Evolution): {:?}", duration);
-        println!("Time per iteration: {:?}", duration / (NUM_ITER as u32));
-
-        //write_report_and_clear("Differential Evolution", &mut report, &mut _f);
-
-        let mut algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MAX);
-
-        if _s.best_fitness() < algo_best {
-            algo_best = _s.best_fitness();
+        for _ in 0..num_iter {
+            /*
             let start = Instant::now();
-            //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, NUM_ITER, algo_best)));
-            println!("Time to generate graph visualization: {:?}", start.elapsed());
+
+            //run_algo!(Fa::default(), report, g);
+            let _s = Solver::build(Fa::default(), MyFunc{graph: &g})
+                .task(|ctx| ctx.gen == num_generations)
+                .pop_num(POP_SIZE)
+                .callback(|ctx| report.push(ctx.best_f))
+                .solve()
+                .unwrap();
+
+            let duration = start.elapsed();
+            println!("Elapsed time (Firefly algorithm): {:?}", duration);
+            println!("Time per iteration: {:?}", duration / (num_generations as u32));
+
+            //write_report_and_clear("Firefly", &mut report, &mut _f);
+
+            let mut algo_best = *best_surprise_per_algo.entry("Firefly").or_insert(f64::MAX);
+
+            if _s.best_fitness() < algo_best {
+                algo_best = _s.best_fitness();
+                visualize_graph(&g, Some(&_s.result()), Some(format!("firefly_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
+            }
+            */
+
             let start = Instant::now();
-            let execution_info = evaluate_execution_time_and_speedup(&g, &_s.result());
-            speedup_sum += execution_info.speedup;
-            println!("{:?}", execution_info);
-            println!("Time to simulate execution: {:?}", start.elapsed());
+
+            let _s = Solver::build(De::default(), MyFunc{graph: &g})
+                .task(|ctx| ctx.gen == num_generations)
+                .pop_num(POP_SIZE)
+                .callback(|ctx| report.push(ctx.best_f))
+                .solve()
+                .unwrap();
+
+            let duration = start.elapsed();
+            println!("Elapsed time (Differential Evolution): {:?}", duration);
+            if num_generations > 0 {
+                println!("Time per iteration: {:?}", duration / (num_generations as u32));
+            }
+
+            //write_report_and_clear("Differential Evolution", &mut report, &mut _f);
+
+            let mut algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MAX);
+
+            if _s.best_fitness() < algo_best {
+                algo_best = _s.best_fitness();
+                let start = Instant::now();
+                //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
+                println!("Time to generate graph visualization: {:?}", start.elapsed());
+                let start = Instant::now();
+                let execution_info = evaluate_execution_time_and_speedup(&g, &_s.result());
+                speedup_sum += execution_info.speedup;
+                println!("{:?}", execution_info);
+                println!("Time to simulate execution: {:?}", start.elapsed());
+            }
+
+            /*
+            let _s = Solver::build(Pso::default(), MyFunc{graph: &g})
+                .task(|ctx| ctx.gen == num_generations)
+                .pop_num(POP_SIZE)
+                .callback(|ctx| report.push(ctx.best_f))
+                .solve()
+                .unwrap();
+
+            write_report_and_clear("Particle Swarm Optimization", &mut report, &mut _f);
+
+            let _s = Solver::build(Rga::default(), MyFunc{graph: &g})
+                .task(|ctx| ctx.gen == num_generations)
+                .pop_num(POP_SIZE)
+                .callback(|ctx| report.push(ctx.best_f))
+                .solve()
+                .unwrap();
+
+            write_report_and_clear("Real-Coded Genetic Algorithm", &mut report, &mut _f);
+
+            let _s = Solver::build(Tlbo::default(), MyFunc{graph: &g})
+                .task(|ctx| ctx.gen == num_generations)
+                .pop_num(POP_SIZE)
+                .callback(|ctx| report.push(ctx.best_f))
+                .solve()
+                .unwrap();
+
+            write_report_and_clear("Teaching Learning Based Optimization", &mut report, &mut _f);
+            */
         }
-
-        /*
-        let _s = Solver::build(Pso::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == NUM_ITER)
-            .pop_num(POP_SIZE)
-            .callback(|ctx| report.push(ctx.best_f))
-            .solve()
-            .unwrap();
-
-        write_report_and_clear("Particle Swarm Optimization", &mut report, &mut _f);
-
-        let _s = Solver::build(Rga::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == NUM_ITER)
-            .pop_num(POP_SIZE)
-            .callback(|ctx| report.push(ctx.best_f))
-            .solve()
-            .unwrap();
-
-        write_report_and_clear("Real-Coded Genetic Algorithm", &mut report, &mut _f);
-
-        let _s = Solver::build(Tlbo::default(), MyFunc{graph: &g})
-            .task(|ctx| ctx.gen == NUM_ITER)
-            .pop_num(POP_SIZE)
-            .callback(|ctx| report.push(ctx.best_f))
-            .solve()
-            .unwrap();
-
-        write_report_and_clear("Teaching Learning Based Optimization", &mut report, &mut _f);
-        */
+        average_speedups.push(speedup_sum / (num_iter as f64));
     }
 
-    println!("Average speedup: {}", speedup_sum / num_iter as f64);
+    for a in average_speedups {
+        println!("Average speedup: {}", a);
+    }
 
     let start = Instant::now();
     //gen_scatter_evolution(TEMP_FILE_NAME, "test");
