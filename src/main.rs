@@ -771,6 +771,7 @@ fn move_free_tasks_to_ready_queues(free_task_indices: &Vec<usize>, ready_queues:
         let pid = pid_array[*i];
 
         ready_queues[pid].push(ExecutionUnit{remaining_work: TASK_SIZE, pid, current_task_node: Some(node_indices[*i].0)});
+        //ready_queues[pid].push(ExecutionUnit{remaining_work: TASK_SIZE, pid, current_task_node: Some(node_indices[*i].0)});
     }
 }
 
@@ -778,8 +779,13 @@ fn move_free_tasks_to_ready_queues(free_task_indices: &Vec<usize>, ready_queues:
 //
 // This returns the smallest number of cycles that will take to retire at least one more task, if
 // possible.
-fn retire_finish_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, core_states: &mut Vec<Option<ExecutionUnit>>, dep_counts: &mut Vec<usize>) -> Option<usize> {
+// TODO: Let it update dep_counts in a way that is compatible with the changing number of nodes in
+// the graph
+fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, core_states: &mut Vec<Option<ExecutionUnit>>, dep_counts: &mut Vec<usize>) -> Option<usize> {
     let mut min_step_for_more_retirements = usize::MAX;
+
+    //println!("[retire_finished_tasks]: Before: {:?}", core_states);
+    println!("[retire_finished_tasks]: Graph before: {:?}", g);
 
     // We reborrow here just to avoid moving
     // core_states to the score of the for,
@@ -796,7 +802,7 @@ fn retire_finish_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Direct
                 for n in g.neighbors_directed(v, petgraph::Outgoing) {
                     let nw = g.node_weight(n).unwrap();
                     let nid = nw.numerical_id;
-                    dep_counts[nid] = dep_counts[nid] - 1;
+                    //dep_counts[nid] = dep_counts[nid] - 1;
                 }
                 
                 *e = None;
@@ -810,6 +816,9 @@ fn retire_finish_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Direct
         }
     }
 
+    //println!("[retire_finished_tasks]: After: {:?}", core_states);
+    println!("[retire_finished_tasks]: Graph after: {:?}", g);
+
     if min_step_for_more_retirements < usize::MAX {
         return Some(min_step_for_more_retirements);
     } else {
@@ -818,12 +827,15 @@ fn retire_finish_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Direct
 }
 
 fn advance_simulation(step_size: usize, core_states: &mut Vec<Option<ExecutionUnit>>) {
+    println!("[advance_simulation]: step_size = {}", step_size);
     println!("Before: {:?}", core_states);
 
     for s_wrapped in &mut *core_states {
         if s_wrapped.is_some() {
-            let s = &mut s_wrapped.unwrap();
-            s.remaining_work -= step_size;
+            let s = s_wrapped.unwrap();
+            let mut updated = s.clone();
+            updated.remaining_work -= step_size;
+            s_wrapped.replace(updated);
         }
     }
 
@@ -845,17 +857,19 @@ fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut
 fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize]) -> ExecutionInfo {
     let mut ready_queues = get_empty_ready_task_queues(MAX_NUMBER_OF_PARTITIONS);
     let mut core_states = get_empty_core_states(MAX_NUMBER_OF_PARTITIONS);
-    let mut dep_counts = get_num_pending_deps(original_graph);
 
     let mut g = original_graph.clone();
     let mut current_time = 0;
+    let total_cpu_time = original_graph.node_count() * TASK_SIZE;
 
     let mut i = 0;
-    //while g.node_count() > 0 {
-    while i < 3 {
+    while g.node_count() > 0 {
+    //while i < 3 {
+        let mut dep_counts = get_num_pending_deps(&g);
         let free_task_indices = get_indices_of_free_tasks(&dep_counts);
+        //move_free_tasks_to_ready_queues(&free_task_indices, &mut ready_queues, pid_array, &g);
         move_free_tasks_to_ready_queues(&free_task_indices, &mut ready_queues, pid_array, &g);
-        let min_step_for_more_retirements = retire_finish_tasks(&mut g, &mut core_states, &mut dep_counts).unwrap_or(0);
+        let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states, &mut dep_counts).unwrap_or(0);
         feed_idle_cores(&mut ready_queues, &mut core_states);
         advance_simulation(min_step_for_more_retirements, &mut core_states);
         current_time += min_step_for_more_retirements;
@@ -863,20 +877,20 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
         println!();
     }
 
-    return ExecutionInfo{exec_time: current_time, total_cpu_time: 0, speedup: 0.0};
+    return ExecutionInfo{exec_time: current_time, total_cpu_time, speedup: (total_cpu_time as f64 / (current_time as f64))};
 }
 
 #[allow(dead_code)]
 fn test_metaheuristics_03(num_iter: usize) {
 
     let mut report = Vec::with_capacity(20);
-    let g = gen_random_digraph(true, 16, Some(32), 32, Some(32), Some(8));
+    let g = gen_random_digraph(true, 16, Some(64), 32, Some(32), Some(8));
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
     const POP_SIZE: usize = 32;
-    const NUM_ITER: u64 = 100;
+    const NUM_ITER: u64 = 1000;
 
     let mut best_surprise_per_algo = HashMap::new();
 
