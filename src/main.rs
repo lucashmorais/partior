@@ -20,7 +20,7 @@ use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
 const MAX_NUMBER_OF_PARTITIONS: usize = 2;
-const MAX_NUMBER_OF_NODES: usize = 512;
+const MAX_NUMBER_OF_NODES: usize = 128;
 
 /*
 use num_integer::binomial;
@@ -192,8 +192,8 @@ fn half_factorial(a: f64, b: f64) -> f64 {
 }
 
 fn new_binomial(a_raw: u64, b_raw: u64) -> f64 {
-    // a: large
-    // a: small
+    // a_raw: large
+    // b_raw: small
     let mut partial = 0.0;
 
     for i in 0..(a_raw - b_raw) {
@@ -280,7 +280,7 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
 
     //println!("Graph surprise: {}", surprise);
     
-    //surprise = surprise + calculate_pid_array_min_max_distance(pid_array, num_nodes);
+    //surprise = surprise + calculate_pid_array_min_max_distance(pid_array, num_nodes) * 10.;
 
     surprise 
 }
@@ -561,8 +561,21 @@ fn test_metaheuristics_01() {
 use metaheuristics_nature::Bounded;
 use metaheuristics_nature::ObjFactory;
 
+// We need an explicit lifetime annotation here
+// to ensure that the graph lives for as long as
+// the solver itself lives. If the solver outlived
+// the graph, it would end up referencing an
+// invalid memory region once if we tried to
+// go through the graph again.
+//
+// If this struct actually held the ownership of
+// a graph rather than merely a reference to one,
+// this would not be necessary, since the graph
+// would only be dropped from memory once the
+// solver is also dropped.
 struct MyFunc<'a> {
-    graph: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>
+    graph: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
+    finalized_core_placements: Option<&'a [usize]>,
 }
 
 impl Bounded for MyFunc<'_> {
@@ -591,16 +604,39 @@ fn floor_float_array(float_arr: &[f64]) -> [usize; MAX_NUMBER_OF_NODES] {
     int_arr
 }
 
+// Here we use a lifetime annotation just to
+// tell the compiler that this trait implementation
+// is useful for MyFunc instances with any
+// lifetime specification.
 impl ObjFactory for MyFunc<'_> {
-    type Product = [usize; MAX_NUMBER_OF_NODES];
+    //type Product = [usize; MAX_NUMBER_OF_NODES];
+    type Product = Vec<usize>;
     type Eval = f64;
 
     fn produce(&self, xs: &[f64]) -> Self::Product {
         //round_float_array(xs)
-        floor_float_array(xs)
+        if self.finalized_core_placements.is_some() {
+            let unwrapped_finalized_core_placements = self.finalized_core_placements.unwrap();
+            let num_finalized = unwrapped_finalized_core_placements.len();
+
+            let mut res = vec![];
+
+            for p in unwrapped_finalized_core_placements {
+                res.push(*p);                
+            }
+
+            for i in num_finalized..MAX_NUMBER_OF_NODES {
+                res.push(xs[i] as usize);                
+            }
+
+            return res;
+        } else {
+            return floor_float_array(xs).into();
+        }
     }
 
-    fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
+    //fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
+    fn evaluate(&self, x: Vec<usize>) -> Self::Eval {
         //400. + (-original_calculate_surprise(&self.graph, Some(&x))).log10()
         //1000.0 + calculate_surprise(&self.graph, Some(&x))
         calculate_surprise(&self.graph, Some(&x))
@@ -619,7 +655,7 @@ fn test_metaheuristics_02() {
     //let s = Solver::build(Tlbo::default(), MyFunc{graph: &g})
 
     //let s = Solver::build(De::default(), MyFunc{graph: &g})
-    let s = Solver::build(Fa::default(), MyFunc{graph: &g})
+    let s = Solver::build(Fa::default(), MyFunc{graph: &g, finalized_core_placements: None})
         .task(|ctx| ctx.gen == 30)
         //.pop_num(20)
         .pop_num(30)
@@ -665,7 +701,7 @@ fn write_report_and_clear (name: &str, rep: &mut Vec<f64>, f: &mut File) {
 // Ref: https://doc.rust-lang.org/reference/macros-by-example.html
 macro_rules! run_algo {
     ($t:expr, $report:ident, $g:ident) => {
-        let _s = Solver::build($t, MyFunc{graph: &$g})
+        let _s = Solver::build($t, MyFunc{graph: &$g, finalized_core_placements: None})
             .task(|ctx| ctx.gen == NUM_ITER)
             .pop_num(POP_SIZE)
             .callback(|ctx| $report.push(ctx.best_f))
@@ -1000,12 +1036,70 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
     return ExecutionInfo{exec_time: current_time, total_cpu_time, speedup: (total_cpu_time as f64 / (current_time as f64))};
 }
 
+fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [usize]>) -> Solver<MyFunc<'a>>{
+    let start = Instant::now();
+
+    use metaheuristics_nature::ndarray::Array2;
+
+    if report.is_some() {
+        let report = report.unwrap();
+
+        let _s = Solver::build(De::default(), MyFunc{graph: &g, finalized_core_placements})
+            .task(|ctx| ctx.gen == num_generations as u64)
+            .pop_num(population_size)
+            //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
+            .pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(i, j)| {
+                if i < 2 {
+                    return rng.range(ctx.func.bound_range(j))
+                } else {
+                    return 0.
+                }
+            }))
+            .callback(|ctx| report.push(ctx.best_f))
+            .solve()
+            .unwrap();
+
+        let duration = start.elapsed();
+        println!("Elapsed time (Differential Evolution): {:?}", duration);
+        if num_generations > 0 {
+            println!("Time per iteration: {:?}", duration / (num_generations as u32));
+        }
+
+        //write_report_and_clear("Differential Evolution", &mut report, &mut _f);
+
+        return _s;
+    } else {
+        let _s = Solver::build(De::default(), MyFunc{graph: &g, finalized_core_placements})
+            .task(|ctx| ctx.gen == num_generations as u64)
+            .pop_num(population_size)
+            //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
+            .pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(i, j)| {
+                if i < 2 {
+                    return rng.range(ctx.func.bound_range(j))
+                } else {
+                    return 0.
+                }
+            }))
+            .solve()
+            .unwrap();
+
+        let duration = start.elapsed();
+        println!("Elapsed time (Differential Evolution): {:?}", duration);
+        if num_generations > 0 {
+            println!("Time per iteration: {:?}", duration / (num_generations as u32));
+        }
+
+        return _s;
+    }
+}
+
 #[allow(dead_code)]
 fn test_metaheuristics_03(num_iter: usize) {
 
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
-    let g = gen_random_digraph(true, 16, Some(256), 32, Some(1024), Some(16));
+    //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
+    let g = gen_random_digraph(true, 16, Some(128), 32, Some(512), Some(16));
     println!("Time to generate random graph: {:?}", start.elapsed());
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
@@ -1017,7 +1111,7 @@ fn test_metaheuristics_03(num_iter: usize) {
 
     let mut average_speedups: Vec<f64> = vec![];
 
-    for num_generations in [0, 10, 100, 4000] {
+    for num_generations in [0, 10, 400] {
         let mut speedup_sum = 0.0;
 
         for _ in 0..num_iter {
@@ -1025,7 +1119,7 @@ fn test_metaheuristics_03(num_iter: usize) {
             let start = Instant::now();
 
             //run_algo!(Fa::default(), report, g);
-            let _s = Solver::build(Fa::default(), MyFunc{graph: &g})
+            let _s = Solver::build(Fa::default(), MyFunc{graph: &g, finalized_core_placements: None})
                 .task(|ctx| ctx.gen == num_generations)
                 .pop_num(POP_SIZE)
                 .callback(|ctx| report.push(ctx.best_f))
@@ -1046,22 +1140,13 @@ fn test_metaheuristics_03(num_iter: usize) {
             }
             */
 
-            let start = Instant::now();
+            /*
+            let test_finalized_inner = [0; MAX_NUMBER_OF_NODES - 50];
+            let test_finalized: Option<&[usize]> = Some(&test_finalized_inner);
+            let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), test_finalized);
+            */
 
-            let _s = Solver::build(De::default(), MyFunc{graph: &g})
-                .task(|ctx| ctx.gen == num_generations)
-                .pop_num(POP_SIZE)
-                .callback(|ctx| report.push(ctx.best_f))
-                .solve()
-                .unwrap();
-
-            let duration = start.elapsed();
-            println!("Elapsed time (Differential Evolution): {:?}", duration);
-            if num_generations > 0 {
-                println!("Time per iteration: {:?}", duration / (num_generations as u32));
-            }
-
-            //write_report_and_clear("Differential Evolution", &mut report, &mut _f);
+            let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None);
 
             let mut algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MAX);
 
@@ -1075,10 +1160,11 @@ fn test_metaheuristics_03(num_iter: usize) {
                 speedup_sum += execution_info.speedup;
                 println!("{:?}", execution_info);
                 println!("Time to simulate execution: {:?}", start.elapsed());
+                println!("Single-shot surprise: {:?}", algo_best);
             }
 
             /*
-            let _s = Solver::build(Pso::default(), MyFunc{graph: &g})
+            let _s = Solver::build(Pso::default(), MyFunc{graph: &g, finalized_core_placements: None})
                 .task(|ctx| ctx.gen == num_generations)
                 .pop_num(POP_SIZE)
                 .callback(|ctx| report.push(ctx.best_f))
@@ -1087,7 +1173,7 @@ fn test_metaheuristics_03(num_iter: usize) {
 
             write_report_and_clear("Particle Swarm Optimization", &mut report, &mut _f);
 
-            let _s = Solver::build(Rga::default(), MyFunc{graph: &g})
+            let _s = Solver::build(Rga::default(), MyFunc{graph: &g, finalized_core_placements: None})
                 .task(|ctx| ctx.gen == num_generations)
                 .pop_num(POP_SIZE)
                 .callback(|ctx| report.push(ctx.best_f))
@@ -1096,7 +1182,7 @@ fn test_metaheuristics_03(num_iter: usize) {
 
             write_report_and_clear("Real-Coded Genetic Algorithm", &mut report, &mut _f);
 
-            let _s = Solver::build(Tlbo::default(), MyFunc{graph: &g})
+            let _s = Solver::build(Tlbo::default(), MyFunc{graph: &g, finalized_core_placements: None})
                 .task(|ctx| ctx.gen == num_generations)
                 .pop_num(POP_SIZE)
                 .callback(|ctx| report.push(ctx.best_f))
