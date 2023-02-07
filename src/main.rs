@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
-const MAX_NUMBER_OF_PARTITIONS: usize = 2;
+const MAX_NUMBER_OF_PARTITIONS: usize = 8;
 const MAX_NUMBER_OF_NODES: usize = 128;
 
 /*
@@ -715,7 +715,9 @@ macro_rules! run_algo {
 struct ExecutionInfo {
     exec_time: usize,
     total_cpu_time: usize,
-    speedup: f64
+    speedup: f64,
+    num_misses: usize,
+    num_tasks_stolen: usize
 }
 
 fn find_min_and_index(v: std::slice::Iter<usize>) -> (usize, usize) {
@@ -772,6 +774,7 @@ fn get_num_pending_deps(graph: &petgraph::Graph<NodeInfo, usize, petgraph::Direc
     for n in graph.node_references().enumerate() {
         let num_deps = graph.neighbors_directed(n.1.0, petgraph::Incoming).count();
         //println!("{:?}, num_deps: {}", n.1, num_deps);
+        //println!("(n.0, n.1, num_deps) = ({:?}, {:?}, {:?})", n.0, n.1, num_deps);
 
         num_pending_deps[n.0] = num_deps;
     }
@@ -801,28 +804,45 @@ const SHARING_THRESHOLD: usize = 0;
 //const SHARING_THRESHOLD: usize = usize::MAX;
 
 //TODO-PERFORMANCE: AVOID RECALCULATION
-fn move_free_tasks_to_ready_queues(ready_queues: &mut Vec<Vec<ExecutionUnit>>, pid_array: &[usize], g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) {
+fn move_free_tasks_to_ready_queues(
+        ready_queues: &mut Vec<Vec<ExecutionUnit>>,
+        pid_array: &[usize],
+        g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
+        original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
+        task_was_sent_to_ready_queue: &mut [bool]
+    ) {
     let dep_counts = get_num_pending_deps(&g);
     let free_task_indices = &get_indices_of_free_tasks(&dep_counts);
 
-    let mut pending_removals: Vec<usize> = vec![];
-
     for i in free_task_indices {
-        let pid = pid_array[*i];
         let nid = g.raw_nodes()[*i].weight.numerical_id;
+        let v = original_graph.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
+        //println!("This is (v, v.index()): ({:?}, {:?})", v, v.index());
 
-        let e = ExecutionUnit{remaining_work: TASK_SIZE, pid, current_task_node: Some(nid)};
+        //let pid = pid_array[*i];
+        let pid = pid_array[v.index()];
 
-        //println!("[move_free_tasks_to_ready_queues]: e = {:?}", e);
+        if !task_was_sent_to_ready_queue[nid] {
+            let e = ExecutionUnit{remaining_work: TASK_SIZE, pid, current_task_node: Some(nid)};
 
-        ready_queues[pid].push(e);
-        pending_removals.push(nid);
+            //println!("[move_free_tasks_to_ready_queues]: e = {:?}", e);
+
+            ready_queues[pid].push(e);
+            task_was_sent_to_ready_queue[nid] = true;
+        }
     }
 
+    /*
+     * THIS ABSOLUTELY CANNOT BE HERE,
+     * BECAUSE ANY DEPENDENCE IS ONLY
+     * FULFILLED AFTER THE OWNING TASK
+     * HAS FINISHED EXECUTING AT THE
+     * CORE.
     for nid in pending_removals {
         let v = g.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
         g.remove_node(v);
     }
+    */
 }
 
 // TODO: Let this automatically update free_task_indices, to avoid recomputation
@@ -846,6 +866,10 @@ fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Dire
             let remaining_work = e_unwrapped.remaining_work;
 
             if remaining_work == 0 {
+                let nid = e.unwrap().current_task_node.unwrap();
+                let v = g.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
+                g.remove_node(v);
+
                 *e = None;
             } else {
                 if remaining_work < min_step_for_more_retirements {
@@ -971,20 +995,32 @@ fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>
     None
 }
 
-fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut Vec<Option<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [usize]) {
+fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut Vec<Option<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [usize]) -> (usize, usize) {
+    let mut num_misses = 0;
+    let mut num_tasks_stolen = 0;
+
     for steal in [false, true] {
-        let mut i = 0;
-        for s_wrapped in &mut *core_states {
+    //for steal in [false] {
+        for i in 0..MAX_NUMBER_OF_PARTITIONS {
+            let s_wrapped = &mut core_states[i];
+
             if s_wrapped.is_none() {
                 //let vl = ready_queues[i].len();
-                let mut w = ready_queues[i].pop();
-                //assert!(vl == 0 || (ready_queues[i].len() == vl - 1));
+                
+                let mut w = None;
+                if !steal {
+                    w = ready_queues[i].pop();
+                }
 
+                //assert!(vl == 0 || (ready_queues[i].len() == vl - 1));
                 //println!("[feed_idle_cores]: popped task: {:?}", w);
                 
                 if steal && w.is_none() {
                     //w = get_task_from_fullest_queue(ready_queues);
                     w = get_task_with_lowest_cluster_degree(ready_queues, original_graph, i, finalized_core_placements);
+                    if w.is_some() {
+                        num_tasks_stolen += 1;
+                    }
                 }
 
                 // This cannot be an else statement
@@ -992,16 +1028,27 @@ fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut
                     let mut w_unwrapped = w.unwrap().clone();
                     let nid = w_unwrapped.current_task_node.unwrap();
                     finalized_core_placements[nid] = i;
-                    w_unwrapped.remaining_work += COMM_PENALTY * num_foreign_incoming_edges(nid, original_graph, i, finalized_core_placements);
+                    let task_num_misses = num_foreign_incoming_edges(nid, original_graph, i, finalized_core_placements);
+                    w_unwrapped.remaining_work += COMM_PENALTY * task_num_misses;
+                    num_misses += task_num_misses;
+
+                    //println!("Feeding task {} to core {}", nid, i);
+
+                    /*
+                    if task_num_misses > 0 {
+                        println!("Just caused {} cache misse(s). Stealing? {}", task_num_misses, steal);
+                    }
+                    */
+
                     w = Some(w_unwrapped);
                 }
 
                 *s_wrapped = w;
             }
-
-            i += 1;
         }
     }
+
+    (num_misses, num_tasks_stolen)
 }
 
 fn all_ready_queues_are_empty(ready_queues: &Vec<Vec<ExecutionUnit>>) -> bool {
@@ -1014,26 +1061,40 @@ fn all_ready_queues_are_empty(ready_queues: &Vec<Vec<ExecutionUnit>>) -> bool {
     true
 }
 
-fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize]) -> ExecutionInfo {
+fn all_cores_are_empty(core_states: &Vec<Option<ExecutionUnit>>) -> bool {
+    for s in core_states {
+        if s.is_some() {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize]) -> ([usize; MAX_NUMBER_OF_NODES], ExecutionInfo) {
     let mut ready_queues = get_empty_ready_task_queues(MAX_NUMBER_OF_PARTITIONS);
     let mut core_states = get_empty_core_states(MAX_NUMBER_OF_PARTITIONS);
 
     let mut g = original_graph.clone();
     let mut current_time = 0;
     let mut finalized_core_placements = [0; MAX_NUMBER_OF_NODES];
+    let mut task_was_sent_to_ready_queue = [false; MAX_NUMBER_OF_NODES];
+    let mut num_misses = 0;
+    let mut num_tasks_stolen = 0;
     let total_cpu_time = original_graph.node_count() * TASK_SIZE;
 
-    while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) {
-        // TODO-PERFORMANCE: Avoid parsing the whole graph for detecting 0-dep tasks at every
-        // iteration
-        move_free_tasks_to_ready_queues(&mut ready_queues, pid_array, &mut g);
-        feed_idle_cores(&mut ready_queues, &mut core_states, &original_graph, &mut finalized_core_placements);
+    while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) || !all_cores_are_empty(&core_states) {
+        // TODO-PERFORMANCE: Avoid parsing the whole graph for detecting 0-dep tasks at every iteration
+        move_free_tasks_to_ready_queues(&mut ready_queues, pid_array, &mut g, &original_graph, &mut task_was_sent_to_ready_queue);
+        let (aux_num_misses, aux_num_tasks_stolen) = feed_idle_cores(&mut ready_queues, &mut core_states, &original_graph, &mut finalized_core_placements);
+        num_misses += aux_num_misses;
+        num_tasks_stolen += aux_num_tasks_stolen;
         let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states).unwrap_or(0);
         advance_simulation(min_step_for_more_retirements, &mut core_states);
         current_time += min_step_for_more_retirements;
     }
 
-    return ExecutionInfo{exec_time: current_time, total_cpu_time, speedup: (total_cpu_time as f64 / (current_time as f64))};
+    return (finalized_core_placements, ExecutionInfo{exec_time: current_time, total_cpu_time, speedup: (total_cpu_time as f64 / (current_time as f64)), num_misses, num_tasks_stolen});
 }
 
 fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [usize]>) -> Solver<MyFunc<'a>>{
@@ -1099,7 +1160,7 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
     //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
-    let g = gen_random_digraph(true, 16, Some(128), 32, Some(512), Some(16));
+    let g = gen_random_digraph(true, 16, Some(128), 32, Some(256), Some(16));
     println!("Time to generate random graph: {:?}", start.elapsed());
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
@@ -1111,7 +1172,7 @@ fn test_metaheuristics_03(num_iter: usize) {
 
     let mut average_speedups: Vec<f64> = vec![];
 
-    for num_generations in [0, 10, 400] {
+    for num_generations in [0, 10, 4000] {
         let mut speedup_sum = 0.0;
 
         for _ in 0..num_iter {
@@ -1148,19 +1209,24 @@ fn test_metaheuristics_03(num_iter: usize) {
 
             let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None);
 
-            let mut algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MAX);
+            let start = Instant::now();
+            //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
+            println!("Time to generate graph visualization: {:?}", start.elapsed());
+            let start = Instant::now();
+            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result());
+            speedup_sum += execution_info.speedup;
+            println!("{:?}", execution_info);
+            println!("Time to simulate execution: {:?}", start.elapsed());
+            println!("Single-shot surprise: {:?}", _s.best_fitness());
+            println!("_s.result():\t\t\t{:?}", _s.result());
+            println!("finalized_core_placements:\t{:?}", finalized_core_placements);
 
+            let algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MAX);
             if _s.best_fitness() < algo_best {
-                algo_best = _s.best_fitness();
-                let start = Instant::now();
-                //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
-                println!("Time to generate graph visualization: {:?}", start.elapsed());
-                let start = Instant::now();
-                let execution_info = evaluate_execution_time_and_speedup(&g, &_s.result());
-                speedup_sum += execution_info.speedup;
-                println!("{:?}", execution_info);
-                println!("Time to simulate execution: {:?}", start.elapsed());
-                println!("Single-shot surprise: {:?}", algo_best);
+                best_surprise_per_algo.insert("Differential Evolution", _s.best_fitness());
+                visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_predicted_placement_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
+                visualize_graph(&g, Some(&finalized_core_placements), Some(format!("differential_evolution_final_placement_{}_{}_{}_{}", POP_SIZE, num_generations, algo_best, execution_info.speedup)));
+                println!("Exact speedup: {:.32}", execution_info.speedup);
             }
 
             /*
