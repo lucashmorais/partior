@@ -963,7 +963,32 @@ fn num_native_edges(nid: usize, original_graph: &petgraph::Graph<NodeInfo, usize
 
 const LIMIT_LATE_STEALING: bool = false;
 
-fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, target_core: usize, finalized_core_placements: &mut [Option<usize>]) -> Option<ExecutionUnit> {
+fn num_edges_to_target_core(nid: usize, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, target_core: usize, finalized_core_placements: &mut [Option<usize>]) -> usize {
+    let original_v = original_graph.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
+
+    let mut num_edges_to_target = 0;
+    for n in original_graph.neighbors_directed(original_v, petgraph::Incoming) {
+        let n_nid = original_graph.node_weight(n).unwrap().numerical_id;
+        let n_finalized_core = finalized_core_placements[n_nid].unwrap();
+
+        if n_finalized_core == target_core {
+            num_edges_to_target += 1;
+        }
+    }
+
+    for n in original_graph.neighbors_directed(original_v, petgraph::Outgoing) {
+        //let n_nid = original_graph.node_weight(n).unwrap().numerical_id;
+        let n_pid = original_graph.node_weight(n).unwrap().partition_id;
+
+        if n_pid == target_core {
+            num_edges_to_target += 1;
+        }
+    }
+
+    num_edges_to_target
+}
+
+fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [Option<usize>]) -> Option<ExecutionUnit> {
     let mut lowest = usize::MAX;
     let mut li = 0;
     let mut lj = 0;
@@ -979,6 +1004,36 @@ fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>
 
                 if cluster_degree < lowest {
                     lowest = cluster_degree;
+                    li = i;
+                    lj = j;
+                }
+            }
+        }
+    }
+
+    if lowest < usize::MAX {
+        return Some(ready_queues[li].remove(lj));
+    }
+
+    None
+}
+
+fn get_task_with_lowest_extra_expected_misses(ready_queues: &mut Vec<Vec<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [Option<usize>], target_core: usize) -> Option<ExecutionUnit> {
+    let mut lowest = usize::MAX;
+    let mut li = 0;
+    let mut lj = 0;
+
+    for (i, q) in ready_queues.into_iter().enumerate() {
+        for (j, e) in q.into_iter().enumerate() {
+            let nid = e.current_task_node.unwrap();
+
+            // TODO: This restricts stealing of the last 10% of tasks to avoid impacting
+            //       final execution time at the last moment.
+            if !LIMIT_LATE_STEALING || nid < (0.85 * MAX_NUMBER_OF_NODES as f64) as usize {
+                let num_expected_misses = num_native_edges(nid, original_graph, finalized_core_placements) - num_edges_to_target_core(nid, original_graph, target_core, finalized_core_placements);
+
+                if num_expected_misses < lowest {
+                    lowest = num_expected_misses;
                     li = i;
                     lj = j;
                 }
@@ -1015,7 +1070,8 @@ fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut
                 
                 if steal && w.is_none() {
                     //w = get_task_from_fullest_queue(ready_queues);
-                    w = get_task_with_lowest_cluster_degree(ready_queues, original_graph, i, finalized_core_placements);
+                    //w = get_task_with_lowest_cluster_degree(ready_queues, original_graph, finalized_core_placements);
+                    w = get_task_with_lowest_extra_expected_misses(ready_queues, original_graph, finalized_core_placements, i);
                     if w.is_some() {
                         num_tasks_stolen += 1;
                     }
