@@ -579,12 +579,13 @@ use metaheuristics_nature::ObjFactory;
 // solver is also dropped.
 struct MyFunc<'a> {
     graph: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
-    finalized_core_placements: Option<&'a [Option<usize>]>,
+    core_bound: &'a [[f64; 2]]
 }
 
 impl Bounded for MyFunc<'_> {
     fn bound(&self) -> &[[f64; 2]] {
-        &[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES]
+        self.core_bound
+        //&[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES]
     }
 }
 
@@ -619,26 +620,7 @@ impl ObjFactory for MyFunc<'_> {
 
     fn produce(&self, xs: &[f64]) -> Self::Product {
         //round_float_array(xs)
-        if self.finalized_core_placements.is_some() {
-            let unwrapped_finalized_core_placements = self.finalized_core_placements.unwrap();
-
-            let mut res = vec![];
-
-            for k in xs {
-                res.push((*k as usize) % MAX_NUMBER_OF_PARTITIONS);                
-            }
-
-            for (i, p) in unwrapped_finalized_core_placements.into_iter().enumerate() {
-                if p.is_some() {
-                    res[i] = p.unwrap();
-                }
-            }
-
-            //println!("{:?}", res);
-            return res;
-        } else {
-            return floor_float_array(xs).into();
-        }
+        return floor_float_array(xs).into();
     }
 
     //fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
@@ -1102,6 +1084,18 @@ fn update_ready_queues_with_new_pid_data(ready_queues: &mut Vec<Vec<ExecutionUni
     }
 }
 
+fn build_bound_vec(finalized_core_placements: &[Option<usize>]) -> Vec<[f64; 2]> {
+    let mut bound_vec = vec![[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
+
+    for p in finalized_core_placements.into_iter().enumerate().filter(|(_, v)| v.is_some()) {
+        let (i, k) = p;
+        let k2 = k.unwrap() as f64;
+        bound_vec[i] = [k2, k2];
+    }
+
+    bound_vec
+}
+
 fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize], num_generations: usize) -> ([Option<usize>; MAX_NUMBER_OF_NODES], ExecutionInfo) {
     let mut ready_queues = get_empty_ready_task_queues(MAX_NUMBER_OF_PARTITIONS);
     let mut core_states = get_empty_core_states(MAX_NUMBER_OF_PARTITIONS);
@@ -1116,8 +1110,10 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
 
     while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) || !all_cores_are_empty(&core_states) {
 
-        let _s = de_solve(&g, num_generations, 32, None, Some(&finalized_core_placements), false);
-        let pid_array = &_s.result();
+        //let core_bound = &build_bound_vec(&finalized_core_placements);
+
+        //let _s = de_solve(&g, num_generations, 32, None, Some(&finalized_core_placements), false, core_bound);
+        //let pid_array = &_s.result();
         //
         // TODO-PERFORMANCE: Avoid re-processing all ready tasks at every iteration
         update_ready_queues_with_new_pid_data(&mut ready_queues, pid_array);
@@ -1135,19 +1131,22 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
     return (finalized_core_placements, ExecutionInfo{exec_time: current_time, total_cpu_time, speedup: (total_cpu_time as f64 / (current_time as f64)), num_misses, num_tasks_stolen});
 }
 
-fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool) -> Solver<MyFunc<'a>>{
+fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]]) -> Solver<MyFunc<'a>>{
     let start = Instant::now();
 
     use metaheuristics_nature::ndarray::Array2;
+    //let core_bound = &[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES][..];
 
     if report.is_some() {
         let report = report.unwrap();
 
-        let _s = Solver::build(De::default(), MyFunc{graph: &g, finalized_core_placements})
-        //let _s = Solver::build(Fa::default(), MyFunc{graph: &g, finalized_core_placements})
+        //let _s = Solver::build(De::default().f(0.5), MyFunc{graph: &g, core_bound})
+        let _s = Solver::build(De::default(), MyFunc{graph: &g, core_bound})
+        //let _s = Solver::build(Fa::default(), MyFunc{graph: &g, finalized_core_placements, core_bound})
             .task(|ctx| ctx.gen == num_generations as u64)
             .pop_num(population_size)
             //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
+            /*
             .pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(i, j)| {
                 if i < 2 {
                     return rng.range(ctx.func.bound_range(j))
@@ -1155,21 +1154,25 @@ fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
                     return 0.
                 }
             }))
+            */
             .callback(|ctx| report.push(ctx.best_f))
             .solve()
             .unwrap();
 
-        let duration = start.elapsed();
-        println!("Elapsed time (Differential Evolution): {:?}", duration);
-        if num_generations > 0 {
-            println!("Time per iteration: {:?}", duration / (num_generations as u32));
+        if verbose {
+            let duration = start.elapsed();
+            println!("Elapsed time (Differential Evolution): {:?}", duration);
+            if num_generations > 0 {
+                println!("Time per iteration: {:?}", duration / (num_generations as u32));
+            }
         }
 
         //write_report_and_clear("Differential Evolution", &mut report, &mut _f);
 
         return _s;
     } else {
-        let _s = Solver::build(De::default(), MyFunc{graph: &g, finalized_core_placements})
+        let _s = Solver::build(De::default(), MyFunc{graph: &g, core_bound})
+        //let _s = Solver::build(Fa::default(), MyFunc{graph: &g, finalized_core_placements, core_bound})
             .task(|ctx| ctx.gen == num_generations as u64)
             .pop_num(population_size)
             //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
@@ -1248,7 +1251,12 @@ fn test_metaheuristics_03(num_iter: usize) {
             let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), test_finalized);
             */
 
-            let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, false);
+            //let mut mut_core_bound = vec![[2., 2.]; MAX_NUMBER_OF_NODES];
+            //mut_core_bound[5] = [3., 3.];
+            //let core_bound = &mut_core_bound;
+
+            let core_bound = &vec![[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
+            let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, false, core_bound);
 
             let start = Instant::now();
             //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
@@ -1262,16 +1270,21 @@ fn test_metaheuristics_03(num_iter: usize) {
             println!("_s.result():\t\t\t{:?}", _s.result());
             println!("finalized_core_placements:\t{:?}", finalized_core_placements);
 
-            let algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MAX);
-            if _s.best_fitness() < algo_best {
-                best_surprise_per_algo.insert("Differential Evolution", _s.best_fitness());
-                //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_predicted_placement_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
-                visualize_graph(&g, Some(&finalized_core_placements), Some(format!("differential_evolution_final_placement_{}_{}_{}_{}", POP_SIZE, num_generations, algo_best, execution_info.speedup)));
+            let algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MIN);
+            //if _s.best_fitness() < algo_best {
+            if execution_info.speedup > algo_best {
+                //best_surprise_per_algo.insert("Differential Evolution", _s.best_fitness());
+                best_surprise_per_algo.insert("Differential Evolution", execution_info.speedup);
+                let mut res: Vec<Option<usize>> = vec![];
+                _s.result().into_iter().for_each(|v| res.push(Some(v)));
+
+                visualize_graph(&g, Some(&res), Some(format!("differential_evolution_predicted_placement_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness())));
+                visualize_graph(&g, Some(&finalized_core_placements), Some(format!("differential_evolution_final_placement_{}_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness(), execution_info.speedup)));
                 println!("Exact speedup: {:.32}", execution_info.speedup);
             }
 
             /*
-            let _s = Solver::build(Pso::default(), MyFunc{graph: &g, finalized_core_placements: None})
+            let _s = Solver::build(Pso::default(), MyFunc{graph: &g})
                 .task(|ctx| ctx.gen == num_generations)
                 .pop_num(POP_SIZE)
                 .callback(|ctx| report.push(ctx.best_f))
