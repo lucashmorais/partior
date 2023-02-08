@@ -1079,6 +1079,21 @@ fn all_cores_are_empty(core_states: &Vec<Option<ExecutionUnit>>) -> bool {
     true
 }
 
+fn update_ready_queues_with_new_pid_data(ready_queues: &mut Vec<Vec<ExecutionUnit>>, pid_array: &[usize]) {
+    let mut all_tasks: Vec<ExecutionUnit> = vec![];
+
+    for q in &mut *ready_queues {
+        all_tasks.append(q);
+    }
+
+    for t in all_tasks {
+        let nid = t.current_task_node.unwrap();
+        let pid = pid_array[nid];
+        
+        ready_queues[pid].push(t);
+    }
+}
+
 fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize]) -> ([usize; MAX_NUMBER_OF_NODES], ExecutionInfo) {
     let mut ready_queues = get_empty_ready_task_queues(MAX_NUMBER_OF_PARTITIONS);
     let mut core_states = get_empty_core_states(MAX_NUMBER_OF_PARTITIONS);
@@ -1092,6 +1107,9 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
     let total_cpu_time = original_graph.node_count() * TASK_SIZE;
 
     while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) || !all_cores_are_empty(&core_states) {
+        // TODO-PERFORMANCE: Avoid re-processing all ready tasks at every iteration
+        update_ready_queues_with_new_pid_data(&mut ready_queues, pid_array);
+
         // TODO-PERFORMANCE: Avoid parsing the whole graph for detecting 0-dep tasks at every iteration
         move_free_tasks_to_ready_queues(&mut ready_queues, pid_array, &mut g, &original_graph, &mut task_was_sent_to_ready_queue);
         let (aux_num_misses, aux_num_tasks_stolen) = feed_idle_cores(&mut ready_queues, &mut core_states, &original_graph, &mut finalized_core_placements);
