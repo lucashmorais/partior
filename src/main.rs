@@ -971,6 +971,8 @@ fn num_native_edges(nid: usize, original_graph: &petgraph::Graph<NodeInfo, usize
     num_native_edges
 }
 
+const LIMIT_LATE_STEALING: bool = false;
+
 fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, target_core: usize, finalized_core_placements: &mut [usize]) -> Option<ExecutionUnit> {
     let mut lowest = usize::MAX;
     let mut li = 0;
@@ -978,12 +980,18 @@ fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>
 
     for (i, q) in ready_queues.into_iter().enumerate() {
         for (j, e) in q.into_iter().enumerate() {
-            let cluster_degree = num_native_edges(e.current_task_node.unwrap(), original_graph, finalized_core_placements);
+            let nid = e.current_task_node.unwrap();
 
-            if cluster_degree < lowest {
-                lowest = cluster_degree;
-                li = i;
-                lj = j;
+            // TODO: This restricts stealing of the last 10% of tasks to avoid impacting
+            //       final execution time at the last moment.
+            if !LIMIT_LATE_STEALING || nid < (0.85 * MAX_NUMBER_OF_NODES as f64) as usize {
+                let cluster_degree = num_native_edges(nid, original_graph, finalized_core_placements);
+
+                if cluster_degree < lowest {
+                    lowest = cluster_degree;
+                    li = i;
+                    lj = j;
+                }
             }
         }
     }
