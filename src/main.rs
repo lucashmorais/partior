@@ -1418,13 +1418,13 @@ fn test_metaheuristics_03(num_iter: usize) {
             println!("Time to generate graph visualization: {:?}", start.elapsed());
             let start = Instant::now();
             let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations);
+            println!("Time to simulate execution: {:?}", start.elapsed());
             speedup_sum += execution_info.speedup;
             fitness_sum += _s.best_fitness();
             let start = Instant::now();
             permanence_sum += calculate_permanence(&g, &finalized_core_placements, &_s.result());
             println!("Time to calculate permanence: {:?}", start.elapsed());
             println!("{:?}", execution_info);
-            println!("Time to simulate execution: {:?}", start.elapsed());
             println!("Single-shot surprise: {:?}", _s.best_fitness());
             println!("_s.result():\t\t\t{:?}", _s.result());
             println!("finalized_core_placements:\t{:?}", finalized_core_placements);
