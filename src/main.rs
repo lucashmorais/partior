@@ -285,6 +285,9 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
     surprise 
 }
 
+// Implemented according to Chakraborty, Tanmoy, et al. "On the permanence of vertices in network communities."
+// Proceedings of the 20th ACM SIGKDD international conference on Knowledge discovery and data mining. 2014.
+// https://doi.org/10.1145/2623330.2623707
 fn node_permanence(nid: usize, original_graph: &Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
     let v = original_graph.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
     let v_pid = pid_array[nid];
