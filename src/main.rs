@@ -354,12 +354,17 @@ fn node_permanence(nid: Option<usize>, v: Option<NodeIndex<usize>>, original_gra
                 let nk_nid = original_graph.node_weight(nk).unwrap().numerical_id;
                 let nk_pid = finalized_core_placements[nk_nid].unwrap_or(pid_array[nk_nid]);
 
-                if nk_pid == k_pid {
+                // We do not take edges involving the query node into account
+                // for calculating internal cluster coefficient
+                if nk_pid == k_pid && k_nid != nid_unwrapped && nk_nid != nid_unwrapped {
                     num_edges_in_v_cluster += 1;
                 }
             }
         }
     }
+    // We do not take the query node into account
+    // for calculating internal cluster coefficient
+    num_nodes_in_v_cluster -= 1;
 
     let max_edges_in_v_cluster = num_nodes_in_v_cluster * (num_nodes_in_v_cluster - 1) / 2;
     let internal_cluster_coefficient = if num_edges_in_v_cluster > 2 && num_nodes_in_v_cluster > 2 {num_edges_in_v_cluster as f64 / max_edges_in_v_cluster as f64} else {0.};
