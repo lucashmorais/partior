@@ -341,7 +341,11 @@ fn node_permanence(nid: usize, original_graph: &Graph<NodeInfo, usize, petgraph:
     let max_edges_in_v_cluster = num_nodes_in_v_cluster * (num_nodes_in_v_cluster - 1) / 2;
     let internal_cluster_coefficient = if num_edges_in_v_cluster > 2 && num_nodes_in_v_cluster > 2 {num_edges_in_v_cluster as f64 / max_edges_in_v_cluster as f64} else {0.};
 
-    (internal_pull as f64 / max_external_pull as f64) / (v_degree as f64) - (1. - internal_cluster_coefficient)
+    if max_external_pull > 0 {
+        return (internal_pull as f64 / max_external_pull as f64) / (v_degree as f64) - (1. - internal_cluster_coefficient);
+    } else {
+        return internal_pull as f64 / v_degree as f64 - (1. - internal_cluster_coefficient);
+    }
 }
 
 fn node_par_region(i: usize, min_parallelism: usize) -> usize {
