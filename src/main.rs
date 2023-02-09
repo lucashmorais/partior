@@ -285,6 +285,96 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
     surprise 
 }
 
+// Implemented according to Chakraborty, Tanmoy, et al. "On the permanence of vertices in network communities."
+// Proceedings of the 20th ACM SIGKDD international conference on Knowledge discovery and data mining. 2014.
+// https://doi.org/10.1145/2623330.2623707
+fn node_permanence(nid: Option<usize>, v: Option<NodeIndex<usize>>, original_graph: &Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
+    let nid_unwrapped = nid.unwrap_or_default();
+    let mut update_nid = false;
+
+    let v = if v.is_some() {
+        update_nid = true;
+        v.unwrap()
+    } else {
+        assert!(nid.is_some());
+        original_graph.node_references().find(|x| x.1.numerical_id == nid_unwrapped).unwrap().id()
+    };
+
+    let nid_unwrapped = if update_nid {
+        original_graph.node_weight(v).unwrap().numerical_id
+    } else {
+        nid_unwrapped
+    };
+
+    let v_pid = pid_array[nid_unwrapped];
+
+    let mut cluster_pulls: HashMap<usize, usize> = HashMap::new();
+
+    let mut v_degree = 0;
+    let mut internal_pull = 0;
+    for n in original_graph.neighbors(v) {
+        v_degree += 1;
+
+        let n_nid = original_graph.node_weight(n).unwrap().numerical_id;
+        let n_pid = finalized_core_placements[n_nid].unwrap_or(pid_array[n_nid]);
+
+        if n_pid != v_pid {
+            let current_cluster_pull = cluster_pulls.entry(n_pid).or_insert(0);
+            *current_cluster_pull += 1;
+        } else {
+            internal_pull += 1;
+        }
+    }
+
+    if v_degree == 0 {
+        return 0.;
+    }
+
+    let mut max_external_pull = 0;
+    //let mut external_cluster_with_maximum_pull = 0;
+
+    for (_pid, pull) in cluster_pulls {
+        if pull > max_external_pull {
+            max_external_pull = pull;
+            //external_cluster_with_maximum_pull = _pid;
+        }
+    }
+
+    let mut num_nodes_in_v_cluster = 0;
+    let mut num_edges_in_v_cluster = 0;
+
+    for k in original_graph.node_references() {
+        let k_nid = original_graph.node_weight(k.id()).unwrap().numerical_id;
+        let k_pid = finalized_core_placements[k_nid].unwrap_or(pid_array[k_nid]);
+
+        if k_pid == v_pid {
+            num_nodes_in_v_cluster += 1;
+
+            for nk in original_graph.neighbors_directed(k.id(), petgraph::Incoming) {
+                let nk_nid = original_graph.node_weight(nk).unwrap().numerical_id;
+                let nk_pid = finalized_core_placements[nk_nid].unwrap_or(pid_array[nk_nid]);
+
+                if nk_pid == k_pid {
+                    num_edges_in_v_cluster += 1;
+                }
+            }
+        }
+    }
+
+    let max_edges_in_v_cluster = num_nodes_in_v_cluster * (num_nodes_in_v_cluster - 1) / 2;
+    let internal_cluster_coefficient = if num_edges_in_v_cluster > 2 && num_nodes_in_v_cluster > 2 {num_edges_in_v_cluster as f64 / max_edges_in_v_cluster as f64} else {0.};
+
+    if max_external_pull > 0 {
+        return (internal_pull as f64 / max_external_pull as f64) / (v_degree as f64) - (1. - internal_cluster_coefficient);
+    } else {
+        return internal_pull as f64 / v_degree as f64 - (1. - internal_cluster_coefficient);
+    }
+}
+
+fn calculate_permanence(original_graph: &Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
+    original_graph.node_references().map(|v| node_permanence(None, Some(v.0), original_graph, finalized_core_placements, pid_array)).fold(0., |acc, x| acc + x) / original_graph.node_count() as f64
+}
+
 fn node_par_region(i: usize, min_parallelism: usize) -> usize {
     i / min_parallelism
 }
