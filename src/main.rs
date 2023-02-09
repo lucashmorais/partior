@@ -471,6 +471,10 @@ fn gen_histogram(csv_path_with_suffix: &'static str, image_output_without_suffix
     let _dot_proc_output = Command::new("src/histogram.py").arg(csv_path_with_suffix).arg(image_output_without_suffix).output().unwrap();
 }
 
+fn gen_speedup_bars(csv_path_with_suffix: &'static str, image_output_without_suffix: &'static str) {
+    let _dot_proc_output = Command::new("src/speedup_graphs.py").arg(csv_path_with_suffix).arg(image_output_without_suffix).output().unwrap();
+}
+
 fn gen_graph_image(file_name: &'static str, output_name: String) {
     let _dot_proc_output = Command::new("dot").arg("-Tpng").arg(file_name).arg("-o").arg(format!("{output_name}.png")).output().unwrap();
 }
@@ -1415,6 +1419,10 @@ fn test_metaheuristics_03(num_iter: usize) {
             let start = Instant::now();
             let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations);
             speedup_sum += execution_info.speedup;
+            fitness_sum += _s.best_fitness();
+            let start = Instant::now();
+            permanence_sum += calculate_permanence(&g, &finalized_core_placements, &_s.result());
+            println!("Time to calculate permanence: {:?}", start.elapsed());
             println!("{:?}", execution_info);
             println!("Time to simulate execution: {:?}", start.elapsed());
             println!("Single-shot surprise: {:?}", _s.best_fitness());
@@ -1463,11 +1471,23 @@ fn test_metaheuristics_03(num_iter: usize) {
             write_report_and_clear("Teaching Learning Based Optimization", &mut report, &mut _f);
             */
         }
-        average_speedups.push(speedup_sum / (num_iter as f64));
+        let average_speedup = speedup_sum / (num_iter as f64);
+        let average_fitness = fitness_sum / (num_iter as f64);
+        let average_permanence = permanence_sum / (num_iter as f64);
+
+        average_speedups.push(average_speedup);
+        average_fitnesses.push(average_fitness);
+        average_permanences.push(average_permanence);
+        _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_generations, average_fitness, average_speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, average_permanence).as_bytes()).unwrap();
     }
 
-    for a in average_speedups {
-        println!("Average speedup: {}", a);
+    gen_speedup_bars(TEMP_FILE_NAME, "speedups");
+
+    for i in 0..average_speedups.len() {
+        println!("Num generations: {}", num_gen_options[i]);
+        println!("Average speedup: {}", average_speedups[i]);
+        println!("Average fitness: {}", average_fitnesses[i]);
+        println!("Average permanence: {}", average_permanences[i]);
     }
 
     let start = Instant::now();
