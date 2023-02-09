@@ -288,9 +288,25 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
 // Implemented according to Chakraborty, Tanmoy, et al. "On the permanence of vertices in network communities."
 // Proceedings of the 20th ACM SIGKDD international conference on Knowledge discovery and data mining. 2014.
 // https://doi.org/10.1145/2623330.2623707
-fn node_permanence(nid: usize, original_graph: &Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
-    let v = original_graph.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
-    let v_pid = pid_array[nid];
+fn node_permanence(nid: Option<usize>, v: Option<NodeIndex<usize>>, original_graph: &Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
+    let nid_unwrapped = nid.unwrap_or_default();
+    let mut update_nid = false;
+
+    let v = if v.is_some() {
+        update_nid = true;
+        v.unwrap()
+    } else {
+        assert!(nid.is_some());
+        original_graph.node_references().find(|x| x.1.numerical_id == nid_unwrapped).unwrap().id()
+    };
+
+    let nid_unwrapped = if update_nid {
+        original_graph.node_weight(v).unwrap().numerical_id
+    } else {
+        nid_unwrapped
+    };
+
+    let v_pid = pid_array[nid_unwrapped];
 
     let mut cluster_pulls: HashMap<usize, usize> = HashMap::new();
 
@@ -349,6 +365,10 @@ fn node_permanence(nid: usize, original_graph: &Graph<NodeInfo, usize, petgraph:
     } else {
         return internal_pull as f64 / v_degree as f64 - (1. - internal_cluster_coefficient);
     }
+}
+
+fn calculate_permanence(original_graph: &Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
+    original_graph.node_references().map(|v| node_permanence(None, Some(v.0), original_graph, finalized_core_placements, pid_array)).fold(0., |acc, x| acc + x)
 }
 
 fn node_par_region(i: usize, min_parallelism: usize) -> usize {
