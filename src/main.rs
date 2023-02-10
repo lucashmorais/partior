@@ -377,7 +377,9 @@ fn node_permanence(nid: Option<usize>, v: Option<NodeIndex<usize>>, original_gra
 }
 
 fn calculate_permanence(original_graph: &Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
-    original_graph.node_references().map(|v| node_permanence(None, Some(v.0), original_graph, finalized_core_placements, pid_array)).fold(0., |acc, x| acc + x) / original_graph.node_count() as f64
+    //original_graph.node_references().map(|v| node_permanence(None, Some(v.0), original_graph, finalized_core_placements, pid_array)).fold(0., |acc, x| acc + x) / original_graph.node_count() as f64
+
+    original_graph.node_references().map(|v| node_permanence(None, Some(v.0), original_graph, finalized_core_placements, pid_array)).fold(0., |acc, x| acc + x) / original_graph.node_count() as f64 - calculate_pid_array_min_max_distance(Some(pid_array), original_graph.node_count())
 }
 
 fn node_par_region(i: usize, min_parallelism: usize) -> usize {
