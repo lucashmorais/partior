@@ -1355,13 +1355,95 @@ fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
     }
 }
 
+fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num_communities: usize, max_comm_size_difference: usize) -> Graph<NodeInfo, usize, petgraph::Directed, usize> {
+    let mut rng = rand::thread_rng();
+
+    let d = max_comm_size_difference;
+    let min_l = (num_nodes as f64 / num_communities as f64).ceil() as usize - d;
+    let max_l = num_nodes / num_communities;
+    
+    let l = rng.gen_range(min_l..=max_l);
+    let h = l + d;
+    let mut missing_nodes = num_nodes - l * num_communities;
+
+    let mut community_sizes = vec![l; num_communities];
+
+    while missing_nodes > 0 {
+        let r = rng.gen_range(0..num_communities);
+
+        if community_sizes[r] < h {
+            community_sizes[r] += 1;
+            missing_nodes -= 1;
+        }
+    }
+
+    let mut base_pid_array: Vec<usize> = Vec::with_capacity(num_nodes);
+
+    for (i, s) in community_sizes.into_iter().enumerate() {
+        for _ in 0..s {
+            base_pid_array.push(i);
+        }
+    }
+
+    let mut missing_nodes = num_nodes;
+    let mut pid_array: Vec<usize> = Vec::with_capacity(num_nodes);
+    
+    while missing_nodes > 0 {
+        let i = rng.gen_range(0..missing_nodes);
+        pid_array.push(base_pid_array.swap_remove(i));
+        missing_nodes -= 1;
+    }
+
+    let mut g = GraphMap::<NodeInfo, usize, petgraph::Directed>::with_capacity(num_nodes, num_edges);
+    assert!(g.node_count() == 0);
+
+    for i in 0..num_nodes {
+        g.add_node(NodeInfo{numerical_id: i, partition_id: pid_array[i]});
+    }
+
+    let nodes: Vec<NodeInfo> = g.nodes().collect();
+    let mut missing_edges = num_edges;
+
+    while missing_edges > 0 {
+        let a = rng.gen_range(0..num_nodes - 1);
+        let b = rng.gen_range(a+1..num_nodes);
+
+        if g.contains_edge(nodes[a], nodes[b]) {
+            continue;
+        }
+        
+        let probability_to_add = if pid_array[a] != pid_array[b] {
+            mixing_coeff
+        } else {
+            1. - mixing_coeff
+        };
+
+        if rng.gen_bool(probability_to_add) {
+            g.add_edge(nodes[a], nodes[b], 1);            
+            missing_edges -= 1;
+        }
+    }
+
+    let g: petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = g.into_graph();
+    g
+}
+
 #[allow(dead_code)]
 fn test_metaheuristics_03(num_iter: usize) {
 
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
+
+    let num_nodes = 32;
+    let num_edges = 32;
+    let min_parallelism = 16;
+    let mixing_coeff = 0.;
+    let num_communities = 8;
+    let max_comm_size_difference = 0;
+
     //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
-    let g = gen_random_digraph(true, 16, Some(128), 32, Some(256), Some(16));
+    //let g = gen_random_digraph(true, 16, Some(num_nodes), 32, Some(num_edges), Some(min_parallelism));
+    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
     println!("Time to generate random graph: {:?}", start.elapsed());
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
