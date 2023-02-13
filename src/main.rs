@@ -1406,7 +1406,7 @@ struct RunConfig {
     probe_step_size: usize
 }
 
-fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]], config: &RunConfig, partial_solutions: &mut Vec<Vec<usize>>) -> Solver<BaseSolver<'a>>{
+fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]], config: &RunConfig, partial_solutions: &mut Vec<(usize, Vec<usize>)>) -> Solver<BaseSolver<'a>>{
     let start = Instant::now();
 
     //let core_bound = &[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES][..];
@@ -1431,7 +1431,7 @@ fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
             .callback(|ctx| {
                 report.push(ctx.best_f);
                 if ctx.gen % config.probe_step_size as u64 == 0 {
-                    partial_solutions.push(ctx.result());
+                    partial_solutions.push((ctx.gen as usize, ctx.result()));
                 }
                 
             })
@@ -1641,7 +1641,7 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut average_fitnesses: Vec<f64> = vec![];
     let mut average_permanences: Vec<f64> = vec![];
 
-    let num_gen_options = [0, 100, 400, 800, 1600, 3200, 6400];
+    let num_gen_options = [8000];
     for num_generations in num_gen_options {
         let mut speedup_sum = 0.0;
         let mut fitness_sum = 0.0;
@@ -1685,14 +1685,23 @@ fn test_metaheuristics_03(num_iter: usize) {
 
             let core_bound = &vec![[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
             let conf = RunConfig{probe_step_size: 100};
-            let mut partial_solutions: Vec<Vec<usize>> = vec![];
+            let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
             let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, true, core_bound, &conf, &mut partial_solutions);
 
-            let mut partial_speedups: Vec<f64> = vec![];
-            for ps in partial_solutions {
-                let (_, execution_info) = evaluate_execution_time_and_speedup(&g, &ps, 0);
-                partial_speedups.push(execution_info.speedup);
+            let mut partial_speedups: Vec<(usize, f64)> = vec![];
+            for i in 0..partial_solutions.len() {
+                let partial_solution = &partial_solutions[i];
+                let pid_array = &partial_solution.1;
+                let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, pid_array, 0);
+                let speedup = execution_info.speedup;
+                let num_gen = partial_solution.0;
+                let fitness = report[i];
+                let permanence = calculate_permanence(&g, &finalized_core_placements, pid_array);
+
+                partial_speedups.push((num_gen, speedup));
+                _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, fitness, speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, permanence).as_bytes()).unwrap();
             }
+
             println!("{:?}", partial_speedups);
 
             let start = Instant::now();
@@ -1760,7 +1769,7 @@ fn test_metaheuristics_03(num_iter: usize) {
         average_speedups.push(average_speedup);
         average_fitnesses.push(average_fitness);
         average_permanences.push(average_permanence);
-        _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_generations, average_fitness, average_speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, average_permanence).as_bytes()).unwrap();
+        //_f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_generations, average_fitness, average_speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, average_permanence).as_bytes()).unwrap();
     }
 
     gen_speedup_bars(TEMP_FILE_NAME, "speedups");
