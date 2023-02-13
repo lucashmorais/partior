@@ -20,8 +20,8 @@ use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
-const MAX_NUMBER_OF_PARTITIONS: usize = 8;
-const MAX_NUMBER_OF_NODES: usize = 32;
+const MAX_NUMBER_OF_PARTITIONS: usize = 4;
+const MAX_NUMBER_OF_NODES: usize = 64;
 
 /*
 use num_integer::binomial;
@@ -1696,7 +1696,10 @@ fn test_metaheuristics_03(num_iter: usize) {
                 let speedup = execution_info.speedup;
                 let num_gen = partial_solution.0;
                 let fitness = report[i];
-                let permanence = calculate_permanence(&g, &finalized_core_placements, pid_array);
+
+                let void_finalized = [None; MAX_NUMBER_OF_NODES];
+                //let permanence = calculate_permanence(&g, &finalized_core_placements, pid_array);
+                let permanence = calculate_permanence(&g, &void_finalized, pid_array);
 
                 partial_speedups.push((num_gen, speedup));
                 _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, fitness, speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, permanence).as_bytes()).unwrap();
@@ -1792,11 +1795,11 @@ fn test_metaheuristics_04(num_iter: usize) {
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
 
-    let num_nodes = 32;
-    let num_edges = 32;
+    let num_nodes = 64;
+    let num_edges = 64;
     let min_parallelism = 16;
-    let mixing_coeff = 0.;
-    let num_communities = 8;
+    let mixing_coeff = 0.1;
+    let num_communities = 4;
     let max_comm_size_difference = 0;
 
     //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
@@ -1951,7 +1954,7 @@ fn main() {
     //test_histogram_01();
     //test_metaheuristics_01();
     //test_metaheuristics_02();
-    test_metaheuristics_03(3);
+    test_metaheuristics_03(10);
     
     /*
     for i in [1,2,3] {
