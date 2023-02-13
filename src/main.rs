@@ -15,12 +15,13 @@ use statrs::function::factorial::binomial;
 use std::collections::HashMap;
 use csv::Writer;
 use std::time::{Duration, Instant};
+use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
 
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
-const MAX_NUMBER_OF_NODES: usize = 128;
+const MAX_NUMBER_OF_NODES: usize = 32;
 
 /*
 use num_integer::binomial;
@@ -239,7 +240,7 @@ fn calculate_pid_array_min_max_distance(pid_array: Option<&[usize]>, num_nodes: 
 
     for i in 0..num_nodes {
         let pid = &pid_array[i];
-        let current_num = num_items_per_pid.get(pid).unwrap();
+        let current_num = num_items_per_pid.get(pid).unwrap_or(&0);
         num_items_per_pid.insert(*pid, current_num + 1);
     }
 
@@ -256,6 +257,65 @@ fn calculate_pid_array_min_max_distance(pid_array: Option<&[usize]>, num_nodes: 
     }
 
     (max - min) as f64 / MAX_NUMBER_OF_NODES as f64
+}
+
+fn expand_compact_pid(compact_pid_array: &[usize], pid_array: &mut [usize]) {
+    let mut partition_sizes = [0; MAX_NUMBER_OF_PARTITIONS];
+    let num_partition_elements = MAX_NUMBER_OF_PARTITIONS - 1;
+
+    let mut remaining_nodes = MAX_NUMBER_OF_NODES;
+    let mut max_i = 0;
+    for i in 0..num_partition_elements {
+        // The `1` ensures that every partition has a different
+        // size, which is useful for reducing the search space
+        let size = partition_sizes[i] + (compact_pid_array[i] + 1);
+
+        if remaining_nodes >= size {
+            partition_sizes[i+1] = size;
+            remaining_nodes -= size;
+        } else {
+            if partition_sizes[i] < remaining_nodes {
+                partition_sizes[i+1] = remaining_nodes;
+            } else {
+                partition_sizes[i] += remaining_nodes;
+            }
+            remaining_nodes = 0;
+        }
+
+        if partition_sizes[i] > partition_sizes[max_i] {
+            max_i = i;
+        }
+
+        if partition_sizes[i+1] > partition_sizes[max_i] {
+            max_i = i+1;
+        }
+    }
+
+    partition_sizes[max_i] += remaining_nodes;
+
+    //println!("{:?}", partition_sizes);
+
+    for i in 1..max_i {
+        if partition_sizes[i] <= partition_sizes[i - 1] {
+            println!("{:?}", partition_sizes);
+            assert!(false);
+        }
+    }
+    //println!("{:?}", partition_sizes);
+    
+    let offset = num_partition_elements;
+    for i in 0..MAX_NUMBER_OF_NODES {
+        let base_pid_step = compact_pid_array[offset + i];
+
+        for step in 0..MAX_NUMBER_OF_PARTITIONS - 1 {
+            let target_pid = (step + base_pid_step) % MAX_NUMBER_OF_PARTITIONS;
+            if partition_sizes[target_pid] > 0 {
+                partition_sizes[target_pid] -= 1;
+                pid_array[i] = target_pid;
+            }
+        }
+    }
+    //println!("{:?}", pid_array);
 }
 
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
@@ -452,8 +512,8 @@ fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Opti
             if num_nodes - first_option <= 0 {
                 continue;
             }
-            b = rng.gen_range(first_option..first_option+5);
-            //b = rng.gen_range(first_option..num_nodes);
+            //b = rng.gen_range(first_option..first_option+5);
+            b = rng.gen_range(first_option..num_nodes);
         }
 
         g.add_edge(NodeInfo {numerical_id: a, partition_id: 0}, NodeInfo {numerical_id: b, partition_id: 0}, i);
@@ -678,12 +738,24 @@ use metaheuristics_nature::ObjFactory;
 // this would not be necessary, since the graph
 // would only be dropped from memory once the
 // solver is also dropped.
-struct MyFunc<'a> {
+struct BaseSolver<'a> {
     graph: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
     core_bound: &'a [[f64; 2]]
 }
 
-impl Bounded for MyFunc<'_> {
+impl Bounded for BaseSolver<'_> {
+    fn bound(&self) -> &[[f64; 2]] {
+        self.core_bound
+        //&[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES]
+    }
+}
+
+struct CompactSolver<'a> {
+    graph: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
+    core_bound: &'a [[f64; 2]]
+}
+
+impl Bounded for CompactSolver<'_> {
     fn bound(&self) -> &[[f64; 2]] {
         self.core_bound
         //&[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES]
@@ -712,9 +784,9 @@ fn floor_float_array(float_arr: &[f64]) -> [usize; MAX_NUMBER_OF_NODES] {
 
 // Here we use a lifetime annotation just to
 // tell the compiler that this trait implementation
-// is useful for MyFunc instances with any
+// is useful for BaseSolver instances with any
 // lifetime specification.
-impl ObjFactory for MyFunc<'_> {
+impl ObjFactory for BaseSolver<'_> {
     //type Product = [usize; MAX_NUMBER_OF_NODES];
     type Product = Vec<usize>;
     type Eval = f64;
@@ -728,7 +800,37 @@ impl ObjFactory for MyFunc<'_> {
     fn evaluate(&self, x: Vec<usize>) -> Self::Eval {
         //400. + (-original_calculate_surprise(&self.graph, Some(&x))).log10()
         //1000.0 + calculate_surprise(&self.graph, Some(&x))
+        
         calculate_surprise(&self.graph, Some(&x))
+        //1. - calculate_permanence(&self.graph, &[None; MAX_NUMBER_OF_NODES], &x)
+    }
+}
+
+impl ObjFactory for CompactSolver<'_> {
+    //type Product = [usize; MAX_NUMBER_OF_NODES];
+    type Product = [usize; MAX_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES];
+    type Eval = f64;
+
+    fn produce(&self, xs: &[f64]) -> Self::Product {
+        const C_SIZE: usize = MAX_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES;
+        let mut compact_pid_array = [0; C_SIZE];
+        
+        for i in 0..C_SIZE {
+            compact_pid_array[i] = xs[i] as usize;
+        }
+
+        compact_pid_array
+    }
+
+    //fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
+    fn evaluate(&self, x: [usize; MAX_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES]) -> Self::Eval {
+        //400. + (-original_calculate_surprise(&self.graph, Some(&x))).log10()
+        //1000.0 + calculate_surprise(&self.graph, Some(&x))
+        
+        let mut pid_array = [0; MAX_NUMBER_OF_NODES];
+        expand_compact_pid(&x, &mut pid_array);
+        calculate_surprise(&self.graph, Some(&pid_array))
+        //1. - calculate_permanence(&self.graph, &[None; MAX_NUMBER_OF_NODES], &x)
     }
 }
 
@@ -740,12 +842,12 @@ fn test_metaheuristics_02() {
     let g = gen_random_digraph(true, 16, Some(32), 64, Some(96), None);
 
 // Build and run the solver
-    //let s = Solver::build(Rga::default(), MyFunc{graph: &g})
-    //let s = Solver::build(Pso::default(), MyFunc{graph: &g})
-    //let s = Solver::build(Tlbo::default(), MyFunc{graph: &g})
+    //let s = Solver::build(Rga::default(), BaseSolver{graph: &g})
+    //let s = Solver::build(Pso::default(), BaseSolver{graph: &g})
+    //let s = Solver::build(Tlbo::default(), BaseSolver{graph: &g})
 
-    //let s = Solver::build(De::default(), MyFunc{graph: &g})
-    let s = Solver::build(Fa::default(), MyFunc{graph: &g, finalized_core_placements: None})
+    //let s = Solver::build(De::default(), BaseSolver{graph: &g})
+    let s = Solver::build(Fa::default(), BaseSolver{graph: &g, finalized_core_placements: None})
         .task(|ctx| ctx.gen == 30)
         //.pop_num(20)
         .pop_num(30)
@@ -781,7 +883,7 @@ fn write_report_and_clear (name: &str, rep: &mut Vec<f64>, f: &mut File) {
     //for h in &mut *rep {
     for i in 0..num_elements {
         let h = rep[i];
-        f.write(format!("{name},{i},{h}\n").as_bytes()).unwrap();
+        f.write(format!("{name},{i},{h},fitness_test\n").as_bytes()).unwrap();
     }
     //f.write(format!("\n").as_bytes()).unwrap();
 
@@ -792,7 +894,7 @@ fn write_report_and_clear (name: &str, rep: &mut Vec<f64>, f: &mut File) {
 // Ref: https://doc.rust-lang.org/reference/macros-by-example.html
 macro_rules! run_algo {
     ($t:expr, $report:ident, $g:ident) => {
-        let _s = Solver::build($t, MyFunc{graph: &$g, finalized_core_placements: None})
+        let _s = Solver::build($t, BaseSolver{graph: &$g, finalized_core_placements: None})
             .task(|ctx| ctx.gen == NUM_ITER)
             .pop_num(POP_SIZE)
             .callback(|ctx| $report.push(ctx.best_f))
@@ -889,8 +991,8 @@ fn get_indices_of_free_tasks(dep_counts: &Vec<usize>) -> Vec<usize> {
     res
 }
 
-const TASK_SIZE: usize = 1;
-const COMM_PENALTY: usize = 2;
+const TASK_SIZE: usize = 20;
+const COMM_PENALTY: usize = 1;
 const SHARING_THRESHOLD: usize = 0;
 //const SHARING_THRESHOLD: usize = usize::MAX;
 
@@ -1131,7 +1233,8 @@ fn get_task_with_lowest_extra_expected_misses(ready_queues: &mut Vec<Vec<Executi
             // TODO: This restricts stealing of the last 10% of tasks to avoid impacting
             //       final execution time at the last moment.
             if !LIMIT_LATE_STEALING || nid < (0.85 * MAX_NUMBER_OF_NODES as f64) as usize {
-                let num_expected_misses = num_native_edges(nid, original_graph, finalized_core_placements) - num_edges_to_target_core(nid, original_graph, target_core, finalized_core_placements);
+                let num_expected_misses = MAX_NUMBER_OF_NODES +  num_native_edges(nid, original_graph, finalized_core_placements) - num_edges_to_target_core(nid, original_graph, target_core, finalized_core_placements);
+                // We add MAX_NUMBER_OF_NODES here just to avoid an underflow
 
                 if num_expected_misses < lowest {
                     lowest = num_expected_misses;
@@ -1253,6 +1356,17 @@ fn build_bound_vec(finalized_core_placements: &[Option<usize>]) -> Vec<[f64; 2]>
     bound_vec
 }
 
+const EPS: f64 = 0.000000000001;
+fn build_bound_vec_for_compact_solver() -> Vec<[f64; 2]> {
+    let mut bound_vec = vec![[0., MAX_NUMBER_OF_PARTITIONS as f64 - EPS]; MAX_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES];
+
+    for i in 0..(MAX_NUMBER_OF_PARTITIONS - 1) {
+        bound_vec[i] = [0., MAX_NUMBER_OF_NODES as f64 + 1. - EPS];
+    }
+
+    bound_vec
+}
+
 fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize], num_generations: usize) -> ([Option<usize>; MAX_NUMBER_OF_NODES], ExecutionInfo) {
     let mut ready_queues = get_empty_ready_task_queues(MAX_NUMBER_OF_PARTITIONS);
     let mut core_states = get_empty_core_states(MAX_NUMBER_OF_PARTITIONS);
@@ -1288,18 +1402,89 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
     return (finalized_core_placements, ExecutionInfo{exec_time: current_time, total_cpu_time, speedup: (total_cpu_time as f64 / (current_time as f64)), num_misses, num_tasks_stolen});
 }
 
-fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]]) -> Solver<MyFunc<'a>>{
+struct RunConfig {
+    probe_step_size: usize
+}
+
+fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]], config: &RunConfig, partial_solutions: &mut Vec<Vec<usize>>) -> Solver<BaseSolver<'a>>{
     let start = Instant::now();
 
-    use metaheuristics_nature::ndarray::Array2;
     //let core_bound = &[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES][..];
 
     if report.is_some() {
         let report = report.unwrap();
 
-        //let _s = Solver::build(De::default().f(0.5), MyFunc{graph: &g, core_bound})
-        let _s = Solver::build(De::default(), MyFunc{graph: &g, core_bound})
-        //let _s = Solver::build(Fa::default(), MyFunc{graph: &g, finalized_core_placements, core_bound})
+        //let _s = Solver::build(De::default().f(0.5), BaseSolver{graph: &g, core_bound})
+        let _s = Solver::build(De::default(), BaseSolver{graph: &g, core_bound})
+            .task(|ctx| ctx.gen == num_generations as u64)
+            .pop_num(population_size)
+            //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
+            /*
+            .pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(i, j)| {
+                if i < 2 {
+                    return rng.range(ctx.func.bound_range(j))
+                } else {
+                    return 0.
+                }
+            }))
+            */
+            .callback(|ctx| {
+                report.push(ctx.best_f);
+                if ctx.gen % config.probe_step_size as u64 == 0 {
+                    partial_solutions.push(ctx.result());
+                }
+                
+            })
+            .solve()
+            .unwrap();
+
+        if verbose {
+            let duration = start.elapsed();
+            println!("Elapsed time (Differential Evolution): {:?}", duration);
+            if num_generations > 0 {
+                println!("Time per iteration: {:?}", duration / (num_generations as u32));
+            }
+        }
+
+        //write_report_and_clear("Differential Evolution", &mut report, &mut _f);
+
+        return _s;
+    } else {
+            let _s = Solver::build(De::default(), BaseSolver{graph: &g, core_bound})
+            .task(|ctx| ctx.gen == num_generations as u64)
+            .pop_num(population_size)
+            //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
+            .pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(i, j)| {
+                if i < 2 {
+                    return rng.range(ctx.func.bound_range(j))
+                } else {
+                    return 0.
+                }
+            }))
+            .solve()
+            .unwrap();
+
+        if verbose {
+            let duration = start.elapsed();
+            println!("Elapsed time (Differential Evolution): {:?}", duration);
+            if num_generations > 0 {
+                println!("Time per iteration: {:?}", duration / (num_generations as u32));
+            }
+        }
+
+        return _s;
+    }
+}
+
+fn de_compact_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]]) -> Solver<CompactSolver<'a>>{
+    let start = Instant::now();
+
+    //let core_bound = &[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES][..];
+
+    if report.is_some() {
+        let report = report.unwrap();
+
+        let _s = Solver::build(De::default(), CompactSolver{graph: &g, core_bound})
             .task(|ctx| ctx.gen == num_generations as u64)
             .pop_num(population_size)
             //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
@@ -1328,8 +1513,7 @@ fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
 
         return _s;
     } else {
-        let _s = Solver::build(De::default(), MyFunc{graph: &g, core_bound})
-        //let _s = Solver::build(Fa::default(), MyFunc{graph: &g, finalized_core_placements, core_bound})
+        let _s = Solver::build(De::default(), CompactSolver{graph: &g, core_bound})
             .task(|ctx| ctx.gen == num_generations as u64)
             .pop_num(population_size)
             //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
@@ -1449,21 +1633,26 @@ fn test_metaheuristics_03(num_iter: usize) {
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
-    const POP_SIZE: usize = 32;
+    const POP_SIZE: usize = 64;
 
     let mut best_surprise_per_algo = HashMap::new();
 
     let mut average_speedups: Vec<f64> = vec![];
+    let mut average_fitnesses: Vec<f64> = vec![];
+    let mut average_permanences: Vec<f64> = vec![];
 
-    for num_generations in [0, 10, 4000] {
+    let num_gen_options = [0, 100, 400, 800, 1600, 3200, 6400];
+    for num_generations in num_gen_options {
         let mut speedup_sum = 0.0;
+        let mut fitness_sum = 0.0;
+        let mut permanence_sum = 0.0;
 
         for _ in 0..num_iter {
             /*
             let start = Instant::now();
 
             //run_algo!(Fa::default(), report, g);
-            let _s = Solver::build(Fa::default(), MyFunc{graph: &g, finalized_core_placements: None})
+            let _s = Solver::build(Fa::default(), BaseSolver{graph: &g})
                 .task(|ctx| ctx.gen == num_generations)
                 .pop_num(POP_SIZE)
                 .callback(|ctx| report.push(ctx.best_f))
@@ -1495,7 +1684,16 @@ fn test_metaheuristics_03(num_iter: usize) {
             //let core_bound = &mut_core_bound;
 
             let core_bound = &vec![[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
-            let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, false, core_bound);
+            let conf = RunConfig{probe_step_size: 100};
+            let mut partial_solutions: Vec<Vec<usize>> = vec![];
+            let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, true, core_bound, &conf, &mut partial_solutions);
+
+            let mut partial_speedups: Vec<f64> = vec![];
+            for ps in partial_solutions {
+                let (_, execution_info) = evaluate_execution_time_and_speedup(&g, &ps, 0);
+                partial_speedups.push(execution_info.speedup);
+            }
+            println!("{:?}", partial_speedups);
 
             let start = Instant::now();
             //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
@@ -1527,7 +1725,7 @@ fn test_metaheuristics_03(num_iter: usize) {
             }
 
             /*
-            let _s = Solver::build(Pso::default(), MyFunc{graph: &g})
+            let _s = Solver::build(Pso::default(), BaseSolver{graph: &g})
                 .task(|ctx| ctx.gen == num_generations)
                 .pop_num(POP_SIZE)
                 .callback(|ctx| report.push(ctx.best_f))
@@ -1536,7 +1734,7 @@ fn test_metaheuristics_03(num_iter: usize) {
 
             write_report_and_clear("Particle Swarm Optimization", &mut report, &mut _f);
 
-            let _s = Solver::build(Rga::default(), MyFunc{graph: &g, finalized_core_placements: None})
+            let _s = Solver::build(Rga::default(), BaseSolver{graph: &g})
                 .task(|ctx| ctx.gen == num_generations)
                 .pop_num(POP_SIZE)
                 .callback(|ctx| report.push(ctx.best_f))
@@ -1545,7 +1743,167 @@ fn test_metaheuristics_03(num_iter: usize) {
 
             write_report_and_clear("Real-Coded Genetic Algorithm", &mut report, &mut _f);
 
-            let _s = Solver::build(Tlbo::default(), MyFunc{graph: &g, finalized_core_placements: None})
+            let _s = Solver::build(Tlbo::default(), BaseSolver{graph: &g})
+                .task(|ctx| ctx.gen == num_generations)
+                .pop_num(POP_SIZE)
+                .callback(|ctx| report.push(ctx.best_f))
+                .solve()
+                .unwrap();
+
+            write_report_and_clear("Teaching Learning Based Optimization", &mut report, &mut _f);
+            */
+        }
+        let average_speedup = speedup_sum / (num_iter as f64);
+        let average_fitness = fitness_sum / (num_iter as f64);
+        let average_permanence = permanence_sum / (num_iter as f64);
+
+        average_speedups.push(average_speedup);
+        average_fitnesses.push(average_fitness);
+        average_permanences.push(average_permanence);
+        _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_generations, average_fitness, average_speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, average_permanence).as_bytes()).unwrap();
+    }
+
+    gen_speedup_bars(TEMP_FILE_NAME, "speedups");
+
+    for i in 0..average_speedups.len() {
+        println!("Num generations: {}", num_gen_options[i]);
+        println!("Average speedup: {}", average_speedups[i]);
+        println!("Average fitness: {}", average_fitnesses[i]);
+        println!("Average permanence: {}", average_permanences[i]);
+    }
+
+    let start = Instant::now();
+    //gen_scatter_evolution(TEMP_FILE_NAME, "test");
+    println!("Time to generate surprise evolution graph: {:?}", start.elapsed());
+}
+
+#[allow(dead_code)]
+fn test_metaheuristics_04(num_iter: usize) {
+
+    let mut report = Vec::with_capacity(20);
+    let start = Instant::now();
+
+    let num_nodes = 32;
+    let num_edges = 32;
+    let min_parallelism = 16;
+    let mixing_coeff = 0.;
+    let num_communities = 8;
+    let max_comm_size_difference = 0;
+
+    //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
+    //let g = gen_random_digraph(true, 16, Some(num_nodes), 32, Some(num_edges), Some(min_parallelism));
+    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    println!("Time to generate random graph: {:?}", start.elapsed());
+
+    const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
+
+    let mut _f = File::create(TEMP_FILE_NAME).unwrap();
+    const POP_SIZE: usize = 64;
+
+    let mut best_surprise_per_algo = HashMap::new();
+
+    let mut average_speedups: Vec<f64> = vec![];
+    let mut average_fitnesses: Vec<f64> = vec![];
+    let mut average_permanences: Vec<f64> = vec![];
+
+    let num_gen_options = [0, 100, 400, 8000];
+    for num_generations in num_gen_options {
+        let mut speedup_sum = 0.0;
+        let mut fitness_sum = 0.0;
+        let mut permanence_sum = 0.0;
+
+        for _ in 0..num_iter {
+            /*
+            let start = Instant::now();
+
+            //run_algo!(Fa::default(), report, g);
+            let _s = Solver::build(Fa::default(), BaseSolver{graph: &g})
+                .task(|ctx| ctx.gen == num_generations)
+                .pop_num(POP_SIZE)
+                .callback(|ctx| report.push(ctx.best_f))
+                .solve()
+                .unwrap();
+
+            let duration = start.elapsed();
+            println!("Elapsed time (Firefly algorithm): {:?}", duration);
+            println!("Time per iteration: {:?}", duration / (num_generations as u32));
+
+            //write_report_and_clear("Firefly", &mut report, &mut _f);
+
+            let mut algo_best = *best_surprise_per_algo.entry("Firefly").or_insert(f64::MAX);
+
+            if _s.best_fitness() < algo_best {
+                algo_best = _s.best_fitness();
+                visualize_graph(&g, Some(&_s.result()), Some(format!("firefly_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
+            }
+            */
+
+            /*
+            let test_finalized_inner = [0; MAX_NUMBER_OF_NODES - 50];
+            let test_finalized: Option<&[usize]> = Some(&test_finalized_inner);
+            let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), test_finalized);
+            */
+
+            //let mut mut_core_bound = vec![[2., 2.]; MAX_NUMBER_OF_NODES];
+            //mut_core_bound[5] = [3., 3.];
+            //let core_bound = &mut_core_bound;
+
+            //let core_bound = &vec![[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
+            let core_bound = &build_bound_vec_for_compact_solver();
+            let _s = de_compact_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, true, core_bound);
+
+            let start = Instant::now();
+            //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
+            println!("Time to generate graph visualization: {:?}", start.elapsed());
+            let start = Instant::now();
+            let mut pid_array = [0; MAX_NUMBER_OF_NODES];
+            expand_compact_pid(&_s.result(), &mut pid_array);
+            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &pid_array, num_generations);
+            //let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations);
+            println!("Time to simulate execution: {:?}", start.elapsed());
+            speedup_sum += execution_info.speedup;
+            fitness_sum += _s.best_fitness();
+            let start = Instant::now();
+            permanence_sum += calculate_permanence(&g, &finalized_core_placements, &_s.result());
+            println!("Time to calculate permanence: {:?}", start.elapsed());
+            println!("{:?}", execution_info);
+            println!("Single-shot surprise: {:?}", _s.best_fitness());
+            println!("_s.result():\t\t\t{:?}", _s.result());
+            println!("finalized_core_placements:\t{:?}", finalized_core_placements);
+
+            let algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MIN);
+            //if _s.best_fitness() < algo_best {
+            if execution_info.speedup > algo_best {
+                //best_surprise_per_algo.insert("Differential Evolution", _s.best_fitness());
+                best_surprise_per_algo.insert("Differential Evolution", execution_info.speedup);
+                let mut res: Vec<Option<usize>> = vec![];
+                _s.result().into_iter().for_each(|v| res.push(Some(v)));
+
+                visualize_graph(&g, Some(&res), Some(format!("differential_evolution_predicted_placement_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness())));
+                visualize_graph(&g, Some(&finalized_core_placements), Some(format!("differential_evolution_final_placement_{}_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness(), execution_info.speedup)));
+                println!("Exact speedup: {:.32}", execution_info.speedup);
+            }
+
+            /*
+            let _s = Solver::build(Pso::default(), BaseSolver{graph: &g})
+                .task(|ctx| ctx.gen == num_generations)
+                .pop_num(POP_SIZE)
+                .callback(|ctx| report.push(ctx.best_f))
+                .solve()
+                .unwrap();
+
+            write_report_and_clear("Particle Swarm Optimization", &mut report, &mut _f);
+
+            let _s = Solver::build(Rga::default(), BaseSolver{graph: &g})
+                .task(|ctx| ctx.gen == num_generations)
+                .pop_num(POP_SIZE)
+                .callback(|ctx| report.push(ctx.best_f))
+                .solve()
+                .unwrap();
+
+            write_report_and_clear("Real-Coded Genetic Algorithm", &mut report, &mut _f);
+
+            let _s = Solver::build(Tlbo::default(), BaseSolver{graph: &g})
                 .task(|ctx| ctx.gen == num_generations)
                 .pop_num(POP_SIZE)
                 .callback(|ctx| report.push(ctx.best_f))
@@ -1584,7 +1942,7 @@ fn main() {
     //test_histogram_01();
     //test_metaheuristics_01();
     //test_metaheuristics_02();
-    test_metaheuristics_03(100);
+    test_metaheuristics_03(3);
     
     /*
     for i in [1,2,3] {
