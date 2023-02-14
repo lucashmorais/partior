@@ -1397,27 +1397,48 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
     let mut num_tasks_stolen = 0;
     let total_cpu_time = original_graph.node_count() * TASK_SIZE;
 
-    //TODO: PUT THIS BEHIND AN IMMEDIATE SUCCESSOR FLAG
-    let immediate_pid_array = &mut [0; MAX_NUMBER_OF_NODES];
+    if immediate_successor {
+        let mut pid_array = [0; MAX_NUMBER_OF_NODES];
 
-    while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) || !all_cores_are_empty(&core_states) {
+        while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) || !all_cores_are_empty(&core_states) {
 
-        //let core_bound = &build_bound_vec(&finalized_core_placements);
+            //let core_bound = &build_bound_vec(&finalized_core_placements);
 
-        //let _s = de_solve(&g, num_generations, 32, None, Some(&finalized_core_placements), false, core_bound);
-        //let pid_array = &_s.result();
-        //
-        // TODO-PERFORMANCE: Avoid re-processing all ready tasks at every iteration
-        update_ready_queues_with_new_pid_data(&mut ready_queues, pid_array);
+            //let _s = de_solve(&g, num_generations, 32, None, Some(&finalized_core_placements), false, core_bound);
+            //let pid_array = &_s.result();
+            //
+            // TODO-PERFORMANCE: Avoid re-processing all ready tasks at every iteration
+            update_ready_queues_with_new_pid_data(&mut ready_queues, &pid_array);
 
-        // TODO-PERFORMANCE: Avoid parsing the whole graph for detecting 0-dep tasks at every iteration
-        move_free_tasks_to_ready_queues(&mut ready_queues, pid_array, &mut g, &original_graph, &mut task_was_sent_to_ready_queue);
-        let (aux_num_misses, aux_num_tasks_stolen) = feed_idle_cores(&mut ready_queues, &mut core_states, &original_graph, &mut finalized_core_placements);
-        num_misses += aux_num_misses;
-        num_tasks_stolen += aux_num_tasks_stolen;
-        let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states, Some(immediate_pid_array)).unwrap_or(0);
-        advance_simulation(min_step_for_more_retirements, &mut core_states);
-        current_time += min_step_for_more_retirements;
+            // TODO-PERFORMANCE: Avoid parsing the whole graph for detecting 0-dep tasks at every iteration
+            move_free_tasks_to_ready_queues(&mut ready_queues, &pid_array, &mut g, &original_graph, &mut task_was_sent_to_ready_queue);
+            let (aux_num_misses, aux_num_tasks_stolen) = feed_idle_cores(&mut ready_queues, &mut core_states, &original_graph, &mut finalized_core_placements);
+            num_misses += aux_num_misses;
+            num_tasks_stolen += aux_num_tasks_stolen;
+            let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states, Some(&mut pid_array)).unwrap_or(0);
+            advance_simulation(min_step_for_more_retirements, &mut core_states);
+            current_time += min_step_for_more_retirements;
+        }
+    } else {
+        while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) || !all_cores_are_empty(&core_states) {
+
+            //let core_bound = &build_bound_vec(&finalized_core_placements);
+
+            //let _s = de_solve(&g, num_generations, 32, None, Some(&finalized_core_placements), false, core_bound);
+            //let pid_array = &_s.result();
+            //
+            // TODO-PERFORMANCE: Avoid re-processing all ready tasks at every iteration
+            update_ready_queues_with_new_pid_data(&mut ready_queues, pid_array);
+
+            // TODO-PERFORMANCE: Avoid parsing the whole graph for detecting 0-dep tasks at every iteration
+            move_free_tasks_to_ready_queues(&mut ready_queues, pid_array, &mut g, &original_graph, &mut task_was_sent_to_ready_queue);
+            let (aux_num_misses, aux_num_tasks_stolen) = feed_idle_cores(&mut ready_queues, &mut core_states, &original_graph, &mut finalized_core_placements);
+            num_misses += aux_num_misses;
+            num_tasks_stolen += aux_num_tasks_stolen;
+            let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states, None).unwrap_or(0);
+            advance_simulation(min_step_for_more_retirements, &mut core_states);
+            current_time += min_step_for_more_retirements;
+        }
     }
 
     return (finalized_core_placements, ExecutionInfo{exec_time: current_time, total_cpu_time, speedup: (total_cpu_time as f64 / (current_time as f64)), num_misses, num_tasks_stolen});
