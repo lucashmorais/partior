@@ -776,7 +776,7 @@ fn floor_float_array(float_arr: &[f64]) -> [usize; MAX_NUMBER_OF_NODES] {
     let mut int_arr: [usize; MAX_NUMBER_OF_NODES] = [0; MAX_NUMBER_OF_NODES];
 
     for i in 0..float_arr.len() {
-        int_arr[i] = float_arr[i] as usize;
+        int_arr[i] = float_arr[i] as usize % MAX_NUMBER_OF_PARTITIONS;
     }
 
     int_arr
@@ -1044,23 +1044,41 @@ fn move_free_tasks_to_ready_queues(
 // possible.
 // TODO: Let it update dep_counts in a way that is compatible with the changing number of nodes in
 // the graph
-fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, core_states: &mut Vec<Option<ExecutionUnit>>) -> Option<usize> {
+fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, core_states: &mut Vec<Option<ExecutionUnit>>, pid_array_option: Option<&mut [usize]>) -> Option<usize> {
     let mut min_step_for_more_retirements = usize::MAX;
+    let apply_immediate_successor;
+    let pid_array;
 
+    if pid_array_option.is_some() {
+        apply_immediate_successor = true;
+        pid_array = pid_array_option.unwrap();
+    } else {
+        apply_immediate_successor = false;
+        pid_array = &mut [];
+    }
 
     // We reborrow here just to avoid moving
     // core_states to the score of the for,
     // which would prevent us from using it
     // down later.
     //println!("[retire_finished_tasks]: core_states before: {:?}", core_states);
-    for (i, e) in core_states.iter_mut().enumerate() {
+    for (_, e) in core_states.iter_mut().enumerate() {
         if e.is_some() {
             let e_unwrapped = e.unwrap();
             let remaining_work = e_unwrapped.remaining_work;
 
             if remaining_work == 0 {
-                let nid = e.unwrap().current_task_node.unwrap();
-                let v = g.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
+                let v_id = e.unwrap().current_task_node.unwrap();
+                let v = g.node_references().find(|x| x.1.numerical_id == v_id).unwrap().id();
+
+                if apply_immediate_successor {
+                    let v_pid = pid_array[v_id];
+                    for n in g.neighbors_directed(v, petgraph::Outgoing) {
+                        let n_id = g.node_weight(n).unwrap().numerical_id;
+                        pid_array[n_id] = v_pid;
+                    }
+                }
+
                 g.remove_node(v);
 
                 *e = None;
@@ -1367,7 +1385,7 @@ fn build_bound_vec_for_compact_solver() -> Vec<[f64; 2]> {
     bound_vec
 }
 
-fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize], num_generations: usize) -> ([Option<usize>; MAX_NUMBER_OF_NODES], ExecutionInfo) {
+fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize], num_generations: usize, immediate_successor: bool) -> ([Option<usize>; MAX_NUMBER_OF_NODES], ExecutionInfo) {
     let mut ready_queues = get_empty_ready_task_queues(MAX_NUMBER_OF_PARTITIONS);
     let mut core_states = get_empty_core_states(MAX_NUMBER_OF_PARTITIONS);
 
@@ -1378,6 +1396,9 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
     let mut num_misses = 0;
     let mut num_tasks_stolen = 0;
     let total_cpu_time = original_graph.node_count() * TASK_SIZE;
+
+    //TODO: PUT THIS BEHIND AN IMMEDIATE SUCCESSOR FLAG
+    let immediate_pid_array = &mut [0; MAX_NUMBER_OF_NODES];
 
     while g.node_count() > 0 || !all_ready_queues_are_empty(&ready_queues) || !all_cores_are_empty(&core_states) {
 
@@ -1394,7 +1415,7 @@ fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo
         let (aux_num_misses, aux_num_tasks_stolen) = feed_idle_cores(&mut ready_queues, &mut core_states, &original_graph, &mut finalized_core_placements);
         num_misses += aux_num_misses;
         num_tasks_stolen += aux_num_tasks_stolen;
-        let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states).unwrap_or(0);
+        let min_step_for_more_retirements = retire_finished_tasks(&mut g, &mut core_states, Some(immediate_pid_array)).unwrap_or(0);
         advance_simulation(min_step_for_more_retirements, &mut core_states);
         current_time += min_step_for_more_retirements;
     }
@@ -1640,6 +1661,7 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut average_speedups: Vec<f64> = vec![];
     let mut average_fitnesses: Vec<f64> = vec![];
     let mut average_permanences: Vec<f64> = vec![];
+    let mut last_immediate_successor_speedup = 0.;
 
     let num_gen_options = [8000];
     for num_generations in num_gen_options {
@@ -1692,7 +1714,7 @@ fn test_metaheuristics_03(num_iter: usize) {
             for i in 0..partial_solutions.len() {
                 let partial_solution = &partial_solutions[i];
                 let pid_array = &partial_solution.1;
-                let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, pid_array, 0);
+                let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, pid_array, 0, false);
                 let speedup = execution_info.speedup;
                 let num_gen = partial_solution.0;
                 let fitness = report[i];
@@ -1707,11 +1729,14 @@ fn test_metaheuristics_03(num_iter: usize) {
 
             println!("{:?}", partial_speedups);
 
+            let (_, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, true);
+            last_immediate_successor_speedup = immediate_successor_execution_info.speedup;
+
             let start = Instant::now();
             //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
             println!("Time to generate graph visualization: {:?}", start.elapsed());
             let start = Instant::now();
-            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations);
+            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, false);
             println!("Time to simulate execution: {:?}", start.elapsed());
             speedup_sum += execution_info.speedup;
             fitness_sum += _s.best_fitness();
@@ -1722,6 +1747,7 @@ fn test_metaheuristics_03(num_iter: usize) {
             println!("Single-shot surprise: {:?}", _s.best_fitness());
             println!("_s.result():\t\t\t{:?}", _s.result());
             println!("finalized_core_placements:\t{:?}", finalized_core_placements);
+
 
             let algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MIN);
             //if _s.best_fitness() < algo_best {
@@ -1783,6 +1809,7 @@ fn test_metaheuristics_03(num_iter: usize) {
         println!("Average fitness: {}", average_fitnesses[i]);
         println!("Average permanence: {}", average_permanences[i]);
     }
+    println!("Immediate successor speedup: {}", last_immediate_successor_speedup);
 
     let start = Instant::now();
     //gen_scatter_evolution(TEMP_FILE_NAME, "test");
@@ -1870,8 +1897,8 @@ fn test_metaheuristics_04(num_iter: usize) {
             let start = Instant::now();
             let mut pid_array = [0; MAX_NUMBER_OF_NODES];
             expand_compact_pid(&_s.result(), &mut pid_array);
-            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &pid_array, num_generations);
-            //let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations);
+            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &pid_array, num_generations, false);
+            //let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, false);
             println!("Time to simulate execution: {:?}", start.elapsed());
             speedup_sum += execution_info.speedup;
             fitness_sum += _s.best_fitness();
