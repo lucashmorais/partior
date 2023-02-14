@@ -93,19 +93,22 @@ for alg in alg_dict.keys():
                         y2.append(average_surprise)
                         y3.append(average_permanence)
 
-fig, ax = plt.subplots(constrained_layout=True)
- 
-ax.set_xlabel("Number of generations")
-ax.set_ylabel("Speedup over serial execution")
-ax.set_title("Speedup as function of number of generations")
+def line_graph(x, y1, y2, suffix):
+    fig, ax = plt.subplots(constrained_layout=True)
+     
+    ax.set_xlabel("Number of generations")
+    ax.set_ylabel("Speedup over serial execution")
+    ax.set_title("Speedup as function of number of generations")
 
-ax2 = ax.twinx()
-ax2.set_ylabel("Single-shot surprise")
- 
-ax.plot(x, y1, color ='maroon')
-ax2.plot(x, y2, color ='yellow')
-#ax2.plot(x, y3, color ='yellow')
-ax.set_xscale('log')
+    ax2 = ax.twinx()
+    ax2.set_ylabel(suffix)
+     
+    ax.plot(x, y1, color ='maroon')
+    ax2.plot(x, y2, color ='yellow')
+    #ax2.plot(x, y3, color ='yellow')
+    ax.set_xscale('log')
 
-plt.savefig(f"{output_path}.png")
+    plt.savefig(f"{output_path}_{suffix.lower()}.png")
 
+line_graph(x, y1, y2, 'Surprise')
+line_graph(x, y1, y3, 'Permanence')
