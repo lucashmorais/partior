@@ -27,9 +27,10 @@ def get_standard_deviation_from_algorithm_iteration(alg_dict, alg, ref_it):
     return np.std(d)
 
 class ExecutionInfo:
-  def __init__(self, surprise, speedup):
+  def __init__(self, surprise, speedup, permanence):
     self.surprise = surprise
     self.speedup = speedup
+    self.permanence = permanence
 
 with open(input_path, "r") as f:
     reader = csv.reader(f, delimiter=",")
@@ -45,6 +46,7 @@ with open(input_path, "r") as f:
         num_nodes = int(l[6])
         num_edges = int(l[7])
         min_parallelism = int(l[8])
+        permanence = float(l[9])
 
         if name not in alg_dict:
             alg_dict[name] = {}
@@ -62,15 +64,16 @@ with open(input_path, "r") as f:
             alg_dict[name][num_cores][min_parallelism][num_nodes][num_edges] = {}
 
         if gen not in alg_dict[name][num_cores][min_parallelism][num_nodes][num_edges]:
-            alg_dict[name][num_cores][min_parallelism][num_nodes][num_edges][gen] = None
+            alg_dict[name][num_cores][min_parallelism][num_nodes][num_edges][gen] = []
 
-        alg_dict[name][num_cores][min_parallelism][num_nodes][num_edges][gen] = ExecutionInfo(surprise, speedup)
+        alg_dict[name][num_cores][min_parallelism][num_nodes][num_edges][gen].append(ExecutionInfo(surprise, speedup, permanence))
 
     #return filter(lambda x: x[12] in ("00GG", "05FT", "66DM")), list(reader))
 
 x = []
 y1 = []
 y2 = []
+y3 = []
 
 for alg in alg_dict.keys():
     for num_cores in alg_dict[alg]:
@@ -80,16 +83,32 @@ for alg in alg_dict.keys():
                     for gen in alg_dict[alg][num_cores][min_parallelism][num_nodes][num_edges]:
                         info = alg_dict[alg][num_cores][min_parallelism][num_nodes][num_edges][gen]
                         x.append(gen)
-                        y1.append(info.speedup)
-                        y2.append(info.surprise)
+                        speedups = list(map(lambda x: x.speedup, info))
+                        surprises = list(map(lambda x: x.surprise, info))
+                        permanences = list(map(lambda x: x.permanence, info))
+                        average_speedup = sum(speedups)/len(speedups)
+                        average_surprise = sum(surprises)/len(surprises)
+                        average_permanence = sum(permanences)/len(permanences)
+                        y1.append(average_speedup)
+                        y2.append(average_surprise)
+                        y3.append(average_permanence)
 
-fig = plt.figure(figsize = (10, 5))
- 
-plt.plot(x, y1, color ='maroon')
-plt.xscale('log')
- 
-plt.xlabel("Number of generations")
-plt.ylabel("Speedup over random task distribution")
-plt.title("Speedup as function of number of generations")
-plt.savefig(f"{output_path}.png")
+def line_graph(x, y1, y2, suffix):
+    fig, ax = plt.subplots(constrained_layout=True)
+     
+    ax.set_xlabel("Number of generations")
+    ax.set_ylabel("Speedup over serial execution")
+    ax.set_title("Speedup as function of number of generations")
 
+    ax2 = ax.twinx()
+    ax2.set_ylabel(suffix)
+     
+    ax.plot(x, y1, color ='maroon')
+    ax2.plot(x, y2, color ='yellow')
+    #ax2.plot(x, y3, color ='yellow')
+    ax.set_xscale('log')
+
+    plt.savefig(f"{output_path}_{suffix.lower()}.png")
+
+line_graph(x, y1, y2, 'Surprise')
+line_graph(x, y1, y3, 'Permanence')
