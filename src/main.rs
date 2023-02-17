@@ -1477,8 +1477,8 @@ fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
             }))
             */
             .callback(|ctx| {
-                report.push(ctx.best_f);
                 if ctx.gen % config.probe_step_size as u64 == 0 {
+                    report.push(ctx.best_f);
                     partial_solutions.push((ctx.gen as usize, ctx.result()));
                 }
                 
@@ -1740,6 +1740,7 @@ fn test_metaheuristics_03(num_iter: usize) {
             let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, true, core_bound, &conf, &mut partial_solutions);
 
             let mut partial_speedups: Vec<(usize, f64)> = vec![];
+            let mut calc_time = Duration::new(0, 0);
             for i in 0..partial_solutions.len() {
                 let partial_solution = &partial_solutions[i];
                 let pid_array = &partial_solution.1;
@@ -1753,7 +1754,8 @@ fn test_metaheuristics_03(num_iter: usize) {
                     permanence += calculate_permanence(&g, &void_finalized, pid_array);
                     speedup += execution_info.speedup;
                 }
-                println!("Time to evaluate executions {} times and calculate speedup and permanence: {:?}", NUM_EVALUATIONS, start.elapsed());
+                calc_time += start.elapsed();
+
 
                 permanence /= NUM_EVALUATIONS as f64;
                 speedup /= NUM_EVALUATIONS as f64;
@@ -1766,6 +1768,7 @@ fn test_metaheuristics_03(num_iter: usize) {
                 partial_speedups.push((num_gen, speedup));
                 _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, fitness, speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, permanence).as_bytes()).unwrap();
             }
+            println!("Time to evaluate executions {} times and calculate speedup and permanence: {:?}", NUM_EVALUATIONS * partial_solutions.len(), calc_time);
 
             println!("{:?}", partial_speedups);
 
