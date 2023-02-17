@@ -1743,14 +1743,25 @@ fn test_metaheuristics_03(num_iter: usize) {
             for i in 0..partial_solutions.len() {
                 let partial_solution = &partial_solutions[i];
                 let pid_array = &partial_solution.1;
-                let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, pid_array, 0, false);
-                let speedup = execution_info.speedup;
+                let mut speedup: f64 = 0.;
+                let mut permanence: f64 = 0.;
+
+                let start = Instant::now();
+                for _ in 0..NUM_EVALUATIONS {
+                    let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, pid_array, 0, false);
+                    let void_finalized = [None; MAX_NUMBER_OF_NODES];
+                    permanence += calculate_permanence(&g, &void_finalized, pid_array);
+                    speedup += execution_info.speedup;
+                }
+                println!("Time to evaluate executions {} times and calculate speedup and permanence: {:?}", NUM_EVALUATIONS, start.elapsed());
+
+                permanence /= NUM_EVALUATIONS as f64;
+                speedup /= NUM_EVALUATIONS as f64;
+
                 let num_gen = partial_solution.0;
                 let fitness = report[i];
 
-                let void_finalized = [None; MAX_NUMBER_OF_NODES];
                 //let permanence = calculate_permanence(&g, &finalized_core_placements, pid_array);
-                let permanence = calculate_permanence(&g, &void_finalized, pid_array);
 
                 partial_speedups.push((num_gen, speedup));
                 _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, fitness, speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, permanence).as_bytes()).unwrap();
@@ -1784,8 +1795,6 @@ fn test_metaheuristics_03(num_iter: usize) {
 
                 if first {
                     first = false;
-                    let start = Instant::now();
-                    println!("Time to calculate permanence: {:?}", start.elapsed());
                     println!("{:?}", execution_info);
                     println!("Single-shot surprise: {:?}", _s.best_fitness());
                     println!("_s.result():\t\t\t{:?}", _s.result());
