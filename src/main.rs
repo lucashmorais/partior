@@ -1679,6 +1679,7 @@ fn test_metaheuristics_03(num_iter: usize) {
     println!("Time to generate random graph: {:?}", start.elapsed());
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
+    const NUM_EVALUATIONS: usize = 100;
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
     const POP_SIZE: usize = 64;
@@ -1688,9 +1689,10 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut average_speedups: Vec<f64> = vec![];
     let mut average_fitnesses: Vec<f64> = vec![];
     let mut average_permanences: Vec<f64> = vec![];
-    let mut last_immediate_successor_speedup = 0.;
+    let mut immediate_successor_average: f64 = 0.;
 
     let num_gen_options = [8000];
+    //let num_gen_options = [0];
     for num_generations in num_gen_options {
         let mut speedup_sum = 0.0;
         let mut fitness_sum = 0.0;
@@ -1756,15 +1758,15 @@ fn test_metaheuristics_03(num_iter: usize) {
 
             println!("{:?}", partial_speedups);
 
-            let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, true);
-            last_immediate_successor_speedup = immediate_successor_execution_info.speedup;
-            if last_immediate_successor_speedup > 0.001 {
-            }
+            for _ in 0..NUM_EVALUATIONS {
+                let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, true);
+                immediate_successor_average += immediate_successor_execution_info.speedup / (NUM_EVALUATIONS * num_iter) as f64;
 
-            let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
-            if last_immediate_successor_speedup > algo_best {
-                best_surprise_per_algo.insert("Random Immediate Successor", last_immediate_successor_speedup);
-                visualize_graph(&g, Some(&immediate_successor_finalized_placements), Some(format!("random_immediate_successor_{}", last_immediate_successor_speedup)));
+                let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
+                if immediate_successor_execution_info.speedup > algo_best {
+                    best_surprise_per_algo.insert("Random Immediate Successor", immediate_successor_execution_info.speedup);
+                    visualize_graph(&g, Some(&immediate_successor_finalized_placements), Some(format!("random_immediate_successor_{}", immediate_successor_execution_info.speedup)));
+                }
             }
 
             let start = Instant::now();
@@ -1843,167 +1845,7 @@ fn test_metaheuristics_03(num_iter: usize) {
         println!("Average fitness: {}", average_fitnesses[i]);
         println!("Average permanence: {}", average_permanences[i]);
     }
-    println!("Immediate successor speedup: {}", last_immediate_successor_speedup);
-
-    let start = Instant::now();
-    //gen_scatter_evolution(TEMP_FILE_NAME, "test");
-    println!("Time to generate surprise evolution graph: {:?}", start.elapsed());
-}
-
-#[allow(dead_code)]
-fn test_metaheuristics_04(num_iter: usize) {
-
-    let mut report = Vec::with_capacity(20);
-    let start = Instant::now();
-
-    let num_nodes = 64;
-    let num_edges = 64;
-    let min_parallelism = 16;
-    let mixing_coeff = 0.1;
-    let num_communities = 4;
-    let max_comm_size_difference = 0;
-
-    //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
-    //let g = gen_random_digraph(true, 16, Some(num_nodes), 32, Some(num_edges), Some(min_parallelism));
-    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
-    println!("Time to generate random graph: {:?}", start.elapsed());
-
-    const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
-
-    let mut _f = File::create(TEMP_FILE_NAME).unwrap();
-    const POP_SIZE: usize = 64;
-
-    let mut best_surprise_per_algo = HashMap::new();
-
-    let mut average_speedups: Vec<f64> = vec![];
-    let mut average_fitnesses: Vec<f64> = vec![];
-    let mut average_permanences: Vec<f64> = vec![];
-
-    let num_gen_options = [0, 100, 400, 8000];
-    for num_generations in num_gen_options {
-        let mut speedup_sum = 0.0;
-        let mut fitness_sum = 0.0;
-        let mut permanence_sum = 0.0;
-
-        for _ in 0..num_iter {
-            /*
-            let start = Instant::now();
-
-            //run_algo!(Fa::default(), report, g);
-            let _s = Solver::build(Fa::default(), BaseSolver{graph: &g})
-                .task(|ctx| ctx.gen == num_generations)
-                .pop_num(POP_SIZE)
-                .callback(|ctx| report.push(ctx.best_f))
-                .solve()
-                .unwrap();
-
-            let duration = start.elapsed();
-            println!("Elapsed time (Firefly algorithm): {:?}", duration);
-            println!("Time per iteration: {:?}", duration / (num_generations as u32));
-
-            //write_report_and_clear("Firefly", &mut report, &mut _f);
-
-            let mut algo_best = *best_surprise_per_algo.entry("Firefly").or_insert(f64::MAX);
-
-            if _s.best_fitness() < algo_best {
-                algo_best = _s.best_fitness();
-                visualize_graph(&g, Some(&_s.result()), Some(format!("firefly_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
-            }
-            */
-
-            /*
-            let test_finalized_inner = [0; MAX_NUMBER_OF_NODES - 50];
-            let test_finalized: Option<&[usize]> = Some(&test_finalized_inner);
-            let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), test_finalized);
-            */
-
-            //let mut mut_core_bound = vec![[2., 2.]; MAX_NUMBER_OF_NODES];
-            //mut_core_bound[5] = [3., 3.];
-            //let core_bound = &mut_core_bound;
-
-            //let core_bound = &vec![[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
-            let core_bound = &build_bound_vec_for_compact_solver();
-            let _s = de_compact_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, true, core_bound);
-
-            let start = Instant::now();
-            //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
-            println!("Time to generate graph visualization: {:?}", start.elapsed());
-            let start = Instant::now();
-            let mut pid_array = [0; MAX_NUMBER_OF_NODES];
-            expand_compact_pid(&_s.result(), &mut pid_array);
-            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &pid_array, num_generations, false);
-            //let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, false);
-            println!("Time to simulate execution: {:?}", start.elapsed());
-            speedup_sum += execution_info.speedup;
-            fitness_sum += _s.best_fitness();
-            let start = Instant::now();
-            permanence_sum += calculate_permanence(&g, &finalized_core_placements, &_s.result());
-            println!("Time to calculate permanence: {:?}", start.elapsed());
-            println!("{:?}", execution_info);
-            println!("Single-shot surprise: {:?}", _s.best_fitness());
-            println!("_s.result():\t\t\t{:?}", _s.result());
-            println!("finalized_core_placements:\t{:?}", finalized_core_placements);
-
-            let algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MIN);
-            //if _s.best_fitness() < algo_best {
-            if execution_info.speedup > algo_best {
-                //best_surprise_per_algo.insert("Differential Evolution", _s.best_fitness());
-                best_surprise_per_algo.insert("Differential Evolution", execution_info.speedup);
-                let mut res: Vec<Option<usize>> = vec![];
-                _s.result().into_iter().for_each(|v| res.push(Some(v)));
-
-                visualize_graph(&g, Some(&res), Some(format!("differential_evolution_predicted_placement_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness())));
-                visualize_graph(&g, Some(&finalized_core_placements), Some(format!("differential_evolution_final_placement_{}_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness(), execution_info.speedup)));
-                println!("Exact speedup: {:.32}", execution_info.speedup);
-            }
-
-            /*
-            let _s = Solver::build(Pso::default(), BaseSolver{graph: &g})
-                .task(|ctx| ctx.gen == num_generations)
-                .pop_num(POP_SIZE)
-                .callback(|ctx| report.push(ctx.best_f))
-                .solve()
-                .unwrap();
-
-            write_report_and_clear("Particle Swarm Optimization", &mut report, &mut _f);
-
-            let _s = Solver::build(Rga::default(), BaseSolver{graph: &g})
-                .task(|ctx| ctx.gen == num_generations)
-                .pop_num(POP_SIZE)
-                .callback(|ctx| report.push(ctx.best_f))
-                .solve()
-                .unwrap();
-
-            write_report_and_clear("Real-Coded Genetic Algorithm", &mut report, &mut _f);
-
-            let _s = Solver::build(Tlbo::default(), BaseSolver{graph: &g})
-                .task(|ctx| ctx.gen == num_generations)
-                .pop_num(POP_SIZE)
-                .callback(|ctx| report.push(ctx.best_f))
-                .solve()
-                .unwrap();
-
-            write_report_and_clear("Teaching Learning Based Optimization", &mut report, &mut _f);
-            */
-        }
-        let average_speedup = speedup_sum / (num_iter as f64);
-        let average_fitness = fitness_sum / (num_iter as f64);
-        let average_permanence = permanence_sum / (num_iter as f64);
-
-        average_speedups.push(average_speedup);
-        average_fitnesses.push(average_fitness);
-        average_permanences.push(average_permanence);
-        _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_generations, average_fitness, average_speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, average_permanence).as_bytes()).unwrap();
-    }
-
-    gen_speedup_bars(TEMP_FILE_NAME, "speedups");
-
-    for i in 0..average_speedups.len() {
-        println!("Num generations: {}", num_gen_options[i]);
-        println!("Average speedup: {}", average_speedups[i]);
-        println!("Average fitness: {}", average_fitnesses[i]);
-        println!("Average permanence: {}", average_permanences[i]);
-    }
+    println!("Immediate successor speedup: {}", immediate_successor_average);
 
     let start = Instant::now();
     //gen_scatter_evolution(TEMP_FILE_NAME, "test");
