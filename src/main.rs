@@ -1769,33 +1769,40 @@ fn test_metaheuristics_03(num_iter: usize) {
                 }
             }
 
-            let start = Instant::now();
-            //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
-            println!("Time to generate graph visualization: {:?}", start.elapsed());
-            let start = Instant::now();
-            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, false);
-            println!("Time to simulate execution: {:?}", start.elapsed());
-            speedup_sum += execution_info.speedup;
-            fitness_sum += _s.best_fitness();
-            let start = Instant::now();
-            permanence_sum += calculate_permanence(&g, &finalized_core_placements, &_s.result());
-            println!("Time to calculate permanence: {:?}", start.elapsed());
-            println!("{:?}", execution_info);
-            println!("Single-shot surprise: {:?}", _s.best_fitness());
-            println!("_s.result():\t\t\t{:?}", _s.result());
-            println!("finalized_core_placements:\t{:?}", finalized_core_placements);
+            let mut first = true;
+            for _ in 0..NUM_EVALUATIONS {
+                let start = Instant::now();
+                let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, false);
 
+                if first {
+                    println!("Time to simulate execution: {:?}", start.elapsed());
+                }
 
-            let algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MIN);
-            if execution_info.speedup > algo_best {
-                //best_surprise_per_algo.insert("Differential Evolution", _s.best_fitness());
-                best_surprise_per_algo.insert("Differential Evolution", execution_info.speedup);
-                let mut res: Vec<Option<usize>> = vec![];
-                _s.result().into_iter().for_each(|v| res.push(Some(v)));
+                speedup_sum += execution_info.speedup;
+                fitness_sum += _s.best_fitness();
+                permanence_sum += calculate_permanence(&g, &finalized_core_placements, &_s.result());
 
-                visualize_graph(&g, Some(&res), Some(format!("differential_evolution_predicted_placement_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness())));
-                visualize_graph(&g, Some(&finalized_core_placements), Some(format!("differential_evolution_final_placement_{}_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness(), execution_info.speedup)));
-                println!("Exact speedup: {:.32}", execution_info.speedup);
+                if first {
+                    first = false;
+                    let start = Instant::now();
+                    println!("Time to calculate permanence: {:?}", start.elapsed());
+                    println!("{:?}", execution_info);
+                    println!("Single-shot surprise: {:?}", _s.best_fitness());
+                    println!("_s.result():\t\t\t{:?}", _s.result());
+                    println!("finalized_core_placements:\t{:?}", finalized_core_placements);
+                }
+
+                let algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MIN);
+                if execution_info.speedup > algo_best {
+                    //best_surprise_per_algo.insert("Differential Evolution", _s.best_fitness());
+                    best_surprise_per_algo.insert("Differential Evolution", execution_info.speedup);
+                    let mut res: Vec<Option<usize>> = vec![];
+                    _s.result().into_iter().for_each(|v| res.push(Some(v)));
+
+                    visualize_graph(&g, Some(&res), Some(format!("differential_evolution_predicted_placement_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness())));
+                    visualize_graph(&g, Some(&finalized_core_placements), Some(format!("differential_evolution_final_placement_{}_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness(), execution_info.speedup)));
+                    println!("Exact speedup: {:.32}", execution_info.speedup);
+                }
             }
 
             /*
@@ -1827,9 +1834,9 @@ fn test_metaheuristics_03(num_iter: usize) {
             write_report_and_clear("Teaching Learning Based Optimization", &mut report, &mut _f);
             */
         }
-        let average_speedup = speedup_sum / (num_iter as f64);
-        let average_fitness = fitness_sum / (num_iter as f64);
-        let average_permanence = permanence_sum / (num_iter as f64);
+        let average_speedup = speedup_sum / ((NUM_EVALUATIONS * num_iter) as f64);
+        let average_fitness = fitness_sum / ((NUM_EVALUATIONS * num_iter) as f64);
+        let average_permanence = permanence_sum / ((NUM_EVALUATIONS * num_iter) as f64);
 
         average_speedups.push(average_speedup);
         average_fitnesses.push(average_fitness);
