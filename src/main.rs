@@ -10,6 +10,7 @@ use std::io::prelude::*;
 use std::fmt;
 use std::process::Command;
 use rand::Rng;
+use rand::seq::SliceRandom;
 use std::cmp::min;
 use statrs::function::factorial::binomial;
 use std::collections::HashMap;
@@ -1273,10 +1274,15 @@ fn get_task_with_lowest_extra_expected_misses(ready_queues: &mut Vec<Vec<Executi
 fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut Vec<Option<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [Option<usize>]) -> (usize, usize) {
     let mut num_misses = 0;
     let mut num_tasks_stolen = 0;
+    let mut core_permutation: [usize; MAX_NUMBER_OF_PARTITIONS] = core::array::from_fn(|i| i);
+    let mut rng = rand::thread_rng();
+
+    core_permutation.shuffle(&mut rng);
 
     for steal in [false, true] {
     //for steal in [false] {
-        for i in 0..MAX_NUMBER_OF_PARTITIONS {
+        //for i in 0..MAX_NUMBER_OF_PARTITIONS {
+        for i in core_permutation {
             let s_wrapped = &mut core_states[i];
 
             if s_wrapped.is_none() {
@@ -1750,8 +1756,16 @@ fn test_metaheuristics_03(num_iter: usize) {
 
             println!("{:?}", partial_speedups);
 
-            let (_, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, true);
+            let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &_s.result(), num_generations, true);
             last_immediate_successor_speedup = immediate_successor_execution_info.speedup;
+            if last_immediate_successor_speedup > 0.001 {
+            }
+
+            let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
+            if last_immediate_successor_speedup > algo_best {
+                best_surprise_per_algo.insert("Random Immediate Successor", last_immediate_successor_speedup);
+                visualize_graph(&g, Some(&immediate_successor_finalized_placements), Some(format!("random_immediate_successor_{}", last_immediate_successor_speedup)));
+            }
 
             let start = Instant::now();
             //visualize_graph(&g, Some(&_s.result()), Some(format!("differential_evolution_{}_{}_{}", POP_SIZE, num_generations, algo_best)));
@@ -1771,7 +1785,6 @@ fn test_metaheuristics_03(num_iter: usize) {
 
 
             let algo_best = *best_surprise_per_algo.entry("Differential Evolution").or_insert(f64::MIN);
-            //if _s.best_fitness() < algo_best {
             if execution_info.speedup > algo_best {
                 //best_surprise_per_algo.insert("Differential Evolution", _s.best_fitness());
                 best_surprise_per_algo.insert("Differential Evolution", execution_info.speedup);
