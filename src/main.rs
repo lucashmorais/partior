@@ -1662,6 +1662,43 @@ fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num
     g
 }
 
+fn graph_splitter(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usize]) -> Vec<Graph<NodeInfo, usize, Directed, usize>>{
+    let graph_vec: Vec<Graph<NodeInfo, usize, Directed, usize>> = vec![];
+
+    // TODO: Extend this for graphs with more than two clusters
+    let mut g0 = g.clone();
+    let mut g1 = g.clone();
+
+    for n in g.node_references() {
+        let n_nid = g.node_weight(n.id()).unwrap().numerical_id;
+        let n_pid = pid_array[n_nid];
+
+        if n_pid == 0 {
+            let to_remove = g1.node_references().find(|x| x.1.numerical_id == n_nid).unwrap().id();
+            g1.remove_node(to_remove);
+        } else {
+            let to_remove = g0.node_references().find(|x| x.1.numerical_id == n_nid).unwrap().id();
+            g0.remove_node(to_remove);
+        }
+    }
+
+    visualize_graph(&g, Some(&array_to_vec(pid_array)), Some(format!("original")));
+    visualize_graph(&g0, None, Some(format!("0")));
+    visualize_graph(&g1, None, Some(format!("1")));
+
+    println!("{:?}", g0);
+    println!();
+    println!("{:?}", g1);
+
+    graph_vec
+}
+
+fn array_to_vec(pid_array: &[usize]) -> Vec<Option<usize>> {
+    let mut res: Vec<Option<usize>> = vec![];
+    pid_array.into_iter().for_each(|v| res.push(Some(*v)));
+    res
+}
+
 #[allow(dead_code)]
 fn test_metaheuristics_03(num_iter: usize) {
 
@@ -1871,6 +1908,29 @@ fn test_metaheuristics_03(num_iter: usize) {
     let start = Instant::now();
     //gen_scatter_evolution(TEMP_FILE_NAME, "test");
     println!("Time to generate surprise evolution graph: {:?}", start.elapsed());
+}
+
+fn test_multi_level_clustering() {
+    let num_nodes = 8;
+    let num_edges = 8;
+    let mixing_coeff = 0.00;
+    let num_communities = 2;
+    let max_comm_size_difference = 0;
+
+    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+
+    const POP_SIZE: usize = 64;
+
+    let num_gen_options = [12000];
+    for num_generations in num_gen_options {
+        let core_bound = &vec![[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
+        let conf = RunConfig{probe_step_size: 100};
+        let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
+        let _s = de_solve(&g, num_generations, POP_SIZE, None, None, true, core_bound, &conf, &mut partial_solutions);
+
+        let pid_array = _s.result();
+        graph_splitter(&g, &pid_array);
+    }
 }
 
 fn main() {
