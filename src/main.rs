@@ -1663,8 +1663,6 @@ fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num
 }
 
 fn graph_splitter(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usize]) -> Vec<Graph<NodeInfo, usize, Directed, usize>>{
-    let graph_vec: Vec<Graph<NodeInfo, usize, Directed, usize>> = vec![];
-
     // TODO: Extend this for graphs with more than two clusters
     let mut g0 = g.clone();
     let mut g1 = g.clone();
@@ -1690,7 +1688,7 @@ fn graph_splitter(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usiz
     println!();
     println!("{:?}", g1);
 
-    graph_vec
+    vec![g0, g1]
 }
 
 fn array_to_vec(pid_array: &[usize]) -> Vec<Option<usize>> {
@@ -1923,13 +1921,26 @@ fn test_multi_level_clustering() {
 
     let num_gen_options = [12000];
     for num_generations in num_gen_options {
-        let core_bound = &vec![[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
-        let conf = RunConfig{probe_step_size: 100};
+        let core_bound = &vec![[0., 2.]; MAX_NUMBER_OF_NODES];
+        let conf = RunConfig{probe_step_size: 1000};
         let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
         let _s = de_solve(&g, num_generations, POP_SIZE, None, None, true, core_bound, &conf, &mut partial_solutions);
 
         let pid_array = _s.result();
-        graph_splitter(&g, &pid_array);
+        let graph_vec = graph_splitter(&g, &pid_array);
+
+        let mut solutions: Vec<Solver<BaseSolver<'_>>> = vec![];
+
+        for i in 0..graph_vec.len() {
+            let g_ref = &graph_vec[i];
+            // TODO-PERFORMANCE: The sub-graphs might be processed much more quickly
+            //                   by building shorter `core_bound`s for them.
+            let sub_s = de_solve(g_ref, num_generations, POP_SIZE, None, None, true, core_bound, &conf, &mut partial_solutions);
+
+            visualize_graph(g_ref, Some(&array_to_vec(&sub_s.result())), Some(format!("sub_graph_{}", i)));
+
+            solutions.push(sub_s);
+        }
     }
 }
 
@@ -1938,7 +1949,9 @@ fn main() {
     //test_histogram_01();
     //test_metaheuristics_01();
     //test_metaheuristics_02();
-    test_metaheuristics_03(10);
+    
+    //test_metaheuristics_03(1);
+    test_multi_level_clustering();
     
     /*
     for i in [1,2,3] {
