@@ -22,8 +22,9 @@ use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
-const MAX_NUMBER_OF_PARTITIONS: usize = 4;
-const MAX_NUMBER_OF_NODES: usize = 64;
+const COLOR_SPACE_REGIONS:usize = 4;
+const MAX_NUMBER_OF_PARTITIONS: usize = 2;
+const MAX_NUMBER_OF_NODES: usize = 16;
 
 /*
 use num_integer::binomial;
@@ -622,7 +623,7 @@ fn visualize_graph(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Optio
 
         let w = node_ref.weight();
         //let c = COLORS[w.partition_id()];
-        let c = get_equally_hue_spaced_hsv_string(w.partition_id(), MAX_NUMBER_OF_PARTITIONS);
+        let c = get_equally_hue_spaced_hsv_string(w.partition_id(), COLOR_SPACE_REGIONS);
         format!("style=filled, color=\"{}\", fillcolor=\"{}\"", c, c).to_string()
     }
 
@@ -1703,11 +1704,11 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
 
-    let num_nodes = 32;
-    let num_edges = 32;
+    let num_nodes = 8;
+    let num_edges = 8;
     let min_parallelism = 16;
-    let mixing_coeff = 0.;
-    let num_communities = 8;
+    let mixing_coeff = 0.00;
+    let num_communities = 2;
     let max_comm_size_difference = 0;
 
     //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
@@ -1716,7 +1717,7 @@ fn test_metaheuristics_03(num_iter: usize) {
     println!("Time to generate random graph: {:?}", start.elapsed());
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
-    const NUM_EVALUATIONS: usize = 100;
+    const NUM_EVALUATIONS: usize = 50;
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
     const POP_SIZE: usize = 64;
@@ -1728,7 +1729,7 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut average_permanences: Vec<f64> = vec![];
     let mut immediate_successor_average: f64 = 0.;
 
-    let num_gen_options = [8000];
+    let num_gen_options = [4000];
     //let num_gen_options = [0];
     for num_generations in num_gen_options {
         let mut speedup_sum = 0.0;
@@ -1908,18 +1909,39 @@ fn test_metaheuristics_03(num_iter: usize) {
     println!("Time to generate surprise evolution graph: {:?}", start.elapsed());
 }
 
+fn merge_pid_arrays(solutions: &Vec<Solver<BaseSolver<'_>>>, graphs: &Vec<Graph<NodeInfo, usize, Directed, usize>>, num_nodes: usize) -> Vec<Option<usize>>{
+    //pid_array: Option<&[Option<usize>]>
+    let mut merged_pid_array: Vec<Option<usize>> = vec![None; num_nodes];
+    let pid_arrays: Vec<Vec<usize>> = solutions.into_iter().map(|s| s.result()).collect();
+
+    for (g_id, g) in graphs.into_iter().enumerate() {
+        for (nid, w) in g.node_weights().enumerate() {
+            let original_nid = w.numerical_id;
+            let pid = pid_arrays[g_id][original_nid];
+
+            merged_pid_array[original_nid] = Some(pid + g_id * 2);
+            //println!("(g_id, nid, original_nid, pid) = ({}, {}, {}, {})", g_id, nid, original_nid, pid);
+        }
+    }
+    
+    //println!("{:?}", pid_arrays);
+    //println!("{:?}", merged_pid_array);
+
+    merged_pid_array
+}
+
 fn test_multi_level_clustering() {
-    let num_nodes = 8;
-    let num_edges = 8;
+    let num_nodes = 16;
+    let num_edges = 16;
     let mixing_coeff = 0.00;
-    let num_communities = 2;
+    let num_communities = 4;
     let max_comm_size_difference = 0;
 
     let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
 
     const POP_SIZE: usize = 64;
 
-    let num_gen_options = [12000];
+    let num_gen_options = [1000];
     for num_generations in num_gen_options {
         let core_bound = &vec![[0., 2.]; MAX_NUMBER_OF_NODES];
         let conf = RunConfig{probe_step_size: 1000};
@@ -1941,6 +1963,10 @@ fn test_multi_level_clustering() {
 
             solutions.push(sub_s);
         }
+
+        let merged_pid_array = merge_pid_arrays(&solutions, &graph_vec, g.node_count());
+        println!("{:?}", merged_pid_array);
+        visualize_graph(&g, Some(&merged_pid_array), Some(format!("merged_graph")));
     }
 }
 
