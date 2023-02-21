@@ -22,9 +22,9 @@ use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
-const COLOR_SPACE_REGIONS:usize = 4;
+const COLOR_SPACE_REGIONS: usize = 32;
 const MAX_NUMBER_OF_PARTITIONS: usize = 2;
-const MAX_NUMBER_OF_NODES: usize = 16;
+const MAX_NUMBER_OF_NODES: usize = 128;
 
 /*
 use num_integer::binomial;
@@ -1668,6 +1668,8 @@ fn graph_splitter(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usiz
     let mut g0 = g.clone();
     let mut g1 = g.clone();
 
+    let mut graphs_vec: Vec<Graph<NodeInfo, usize, Directed, usize>> = vec![];
+
     for n in g.node_references() {
         let n_nid = g.node_weight(n.id()).unwrap().numerical_id;
         let n_pid = pid_array[n_nid];
@@ -1689,7 +1691,10 @@ fn graph_splitter(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usiz
     println!();
     println!("{:?}", g1);
 
-    vec![g0, g1]
+    graphs_vec.push(g0);
+    graphs_vec.push(g1);
+
+    graphs_vec
 }
 
 fn array_to_vec(pid_array: &[usize]) -> Vec<Option<usize>> {
@@ -1909,18 +1914,17 @@ fn test_metaheuristics_03(num_iter: usize) {
     println!("Time to generate surprise evolution graph: {:?}", start.elapsed());
 }
 
-fn merge_pid_arrays(solutions: &Vec<Solver<BaseSolver<'_>>>, graphs: &Vec<Graph<NodeInfo, usize, Directed, usize>>, num_nodes: usize) -> Vec<Option<usize>>{
-    //pid_array: Option<&[Option<usize>]>
+fn merge_pid_arrays_from_solutions(solutions: &Vec<Solver<BaseSolver<'_>>>, graphs: &Vec<Graph<NodeInfo, usize, Directed, usize>>, num_nodes: usize) -> Vec<Option<usize>>{
     let mut merged_pid_array: Vec<Option<usize>> = vec![None; num_nodes];
     let pid_arrays: Vec<Vec<usize>> = solutions.into_iter().map(|s| s.result()).collect();
 
     for (g_id, g) in graphs.into_iter().enumerate() {
-        for (nid, w) in g.node_weights().enumerate() {
+        for (_nid, w) in g.node_weights().enumerate() {
             let original_nid = w.numerical_id;
             let pid = pid_arrays[g_id][original_nid];
 
             merged_pid_array[original_nid] = Some(pid + g_id * 2);
-            //println!("(g_id, nid, original_nid, pid) = ({}, {}, {}, {})", g_id, nid, original_nid, pid);
+            //println!("(g_id, _nid, original_nid, pid) = ({}, {}, {}, {})", g_id, nid, original_nid, pid);
         }
     }
     
@@ -1930,43 +1934,99 @@ fn merge_pid_arrays(solutions: &Vec<Solver<BaseSolver<'_>>>, graphs: &Vec<Graph<
     merged_pid_array
 }
 
+fn merge_pid_arrays(pid_arrays: &Vec<Vec<Option<usize>>>, graphs: &Vec<Graph<NodeInfo, usize, Directed, usize>>, num_nodes: usize, target_num_partitions: usize) -> Vec<Option<usize>>{
+    let mut merged_pid_array: Vec<Option<usize>> = vec![None; num_nodes];
+
+    for (g_id, g) in graphs.into_iter().enumerate() {
+        for (_nid, w) in g.node_weights().enumerate() {
+            let original_nid = w.numerical_id;
+            let pid = pid_arrays[g_id][original_nid].unwrap();
+
+            merged_pid_array[original_nid] = Some(pid + g_id * target_num_partitions / 2);
+            //println!("(g_id, _nid, original_nid, pid) = ({}, {}, {}, {})", g_id, nid, original_nid, pid);
+        }
+    }
+    
+    //println!("{:?}", pid_arrays);
+    //println!("{:?}", merged_pid_array);
+
+    merged_pid_array
+}
+
+fn two_level_split_solve_merge(population_size: usize, num_generations: usize, target_num_partitions: usize, g: &Graph<NodeInfo, usize, Directed, usize>) {
+    let core_bound = &vec![[0., 2.]; MAX_NUMBER_OF_NODES];
+    let conf = RunConfig{probe_step_size: 1000};
+    let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
+    let _s = de_solve(&g, num_generations, population_size, None, None, true, core_bound, &conf, &mut partial_solutions);
+
+    let pid_array = _s.result();
+    let graph_vec = graph_splitter(&g, &pid_array);
+
+    let mut solutions: Vec<Solver<BaseSolver<'_>>> = vec![];
+
+    for i in 0..graph_vec.len() {
+        let g_ref = &graph_vec[i];
+        // TODO-PERFORMANCE: The sub-graphs might be processed much more quickly
+        //                   by building shorter `core_bound`s for them.
+        let sub_s = de_solve(g_ref, num_generations, population_size, None, None, true, core_bound, &conf, &mut partial_solutions);
+
+        visualize_graph(g_ref, Some(&array_to_vec(&sub_s.result())), Some(format!("sub_graph_{}", i)));
+
+        solutions.push(sub_s);
+    }
+
+    let merged_pid_array = merge_pid_arrays_from_solutions(&solutions, &graph_vec, g.node_count());
+    println!("{:?}", merged_pid_array);
+    visualize_graph(&g, Some(&merged_pid_array), Some(format!("merged_graph")));
+}
+
+fn split_solve_merge(population_size: usize, num_generations: usize, target_num_partitions: usize, g: &Graph<NodeInfo, usize, Directed, usize>) -> Vec<Option<usize>> {
+    let core_bound = &vec![[0., 2.]; MAX_NUMBER_OF_NODES];
+    let conf = RunConfig{probe_step_size: 1000};
+    let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
+
+    let _s = de_solve(&g, num_generations, population_size, None, None, true, core_bound, &conf, &mut partial_solutions);
+    let pid_array = _s.result();
+
+    if target_num_partitions > 2 {
+        let graph_vec = graph_splitter(&g, &pid_array);
+        let mut partial_pid_arrays: Vec<Vec<Option<usize>>> = vec![];
+
+        for i in 0..graph_vec.len() {
+            let g_ref = &graph_vec[i];
+            let partial_pid_array = split_solve_merge(population_size, num_generations, target_num_partitions / 2, g_ref);
+
+            if target_num_partitions == COLOR_SPACE_REGIONS {
+                visualize_graph(g_ref, Some(&partial_pid_array), Some(format!("sub_graph_{}", i)));
+            }
+            partial_pid_arrays.push(partial_pid_array);
+        }
+
+        let merged_pid_array = merge_pid_arrays(&partial_pid_arrays, &graph_vec, MAX_NUMBER_OF_NODES, target_num_partitions);
+        println!("{:?}", merged_pid_array);
+        visualize_graph(&g, Some(&merged_pid_array), Some(format!("merged_graph")));
+
+        return merged_pid_array;
+    } else {
+        return array_to_vec(&pid_array);
+    }
+}
+
 fn test_multi_level_clustering() {
-    let num_nodes = 16;
-    let num_edges = 16;
-    let mixing_coeff = 0.00;
-    let num_communities = 4;
+    let num_nodes = 128;
+    let num_edges = 128;
+    let mixing_coeff = 0.01;
+    let num_communities = 32;
     let max_comm_size_difference = 0;
 
     let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
 
     const POP_SIZE: usize = 64;
 
-    let num_gen_options = [1000];
+    let num_gen_options = [3000];
     for num_generations in num_gen_options {
-        let core_bound = &vec![[0., 2.]; MAX_NUMBER_OF_NODES];
-        let conf = RunConfig{probe_step_size: 1000};
-        let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
-        let _s = de_solve(&g, num_generations, POP_SIZE, None, None, true, core_bound, &conf, &mut partial_solutions);
-
-        let pid_array = _s.result();
-        let graph_vec = graph_splitter(&g, &pid_array);
-
-        let mut solutions: Vec<Solver<BaseSolver<'_>>> = vec![];
-
-        for i in 0..graph_vec.len() {
-            let g_ref = &graph_vec[i];
-            // TODO-PERFORMANCE: The sub-graphs might be processed much more quickly
-            //                   by building shorter `core_bound`s for them.
-            let sub_s = de_solve(g_ref, num_generations, POP_SIZE, None, None, true, core_bound, &conf, &mut partial_solutions);
-
-            visualize_graph(g_ref, Some(&array_to_vec(&sub_s.result())), Some(format!("sub_graph_{}", i)));
-
-            solutions.push(sub_s);
-        }
-
-        let merged_pid_array = merge_pid_arrays(&solutions, &graph_vec, g.node_count());
-        println!("{:?}", merged_pid_array);
-        visualize_graph(&g, Some(&merged_pid_array), Some(format!("merged_graph")));
+        //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
+        split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
     }
 }
 
