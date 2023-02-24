@@ -131,6 +131,7 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
                 let pid_array = pid_array.unwrap();
 
                 let pid = pid_array[v.weight().numerical_id];
+                //let pid = pid_array[v.id().index()];
                 //println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
 
                 for n in self.neighbors(v.id()) {
@@ -2058,21 +2059,22 @@ fn test_multi_level_clustering() {
     let num_nodes = 64;
     let num_edges = 64;
     //let mixing_coeff = 0.003;
-    let mixing_coeff = 0.000;
+    let mixing_coeff = 0.003;
     let num_communities = 8;
     let max_comm_size_difference = 0;
 
     let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
-    const NUM_EVALUATIONS: usize = 10;
+    const NUM_SOLVER_EVALUATIONS: usize = 10;
+    const NUM_SIMULATOR_EVALUATIONS: usize = 10;
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
     const POP_SIZE: usize = 64;
 
     let num_gen_options = [4000];
     for num_generations in num_gen_options {
-        for _ in 0..NUM_EVALUATIONS {
+        for _ in 0..NUM_SOLVER_EVALUATIONS {
             //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
             let start = Instant::now();
             let (pid_array, partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
@@ -2099,17 +2101,19 @@ fn test_multi_level_clustering() {
             for (num_gen, pid_array) in partial_solutions {
                 let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &g, Some(&pid_array));
 
-                let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_gen, true);
-                let ims_permanence = calculate_permanence(&g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
-                let ims_surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+                for _ in 0..NUM_SIMULATOR_EVALUATIONS {
+                    let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_gen, true);
+                    let ims_permanence = calculate_permanence(&g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+                    let ims_surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
 
-                _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
+                    _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
 
-                let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_gen, false);
-                let permanence = calculate_permanence(&g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
-                let surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&finalized_core_placements)));
+                    let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_gen, false);
+                    let permanence = calculate_permanence(&g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+                    let surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&finalized_core_placements)));
 
-                _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
+                    _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
+                }
             }
         }
     }
