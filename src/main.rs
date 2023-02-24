@@ -1,4 +1,5 @@
 use petgraph::graph::*;
+use petgraph::Directed;
 use petgraph::graphmap::GraphMap;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::visit::NodeRef;
@@ -21,7 +22,8 @@ use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
-const MAX_NUMBER_OF_PARTITIONS: usize = 4;
+const MAX_NUMBER_OF_PARTITIONS: usize = 8;
+const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
 const MAX_NUMBER_OF_NODES: usize = 64;
 
 /*
@@ -105,7 +107,7 @@ pub trait CanCountInternalLinks {
     fn calculate_max_internal_links(&self, pid_array: Option<&[usize]>) -> usize;
 }
 
-impl CanCountInternalLinks for Graph<NodeInfo, usize, petgraph::Directed, usize> {
+impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
     fn internal_edge_count(&self, pid_array: Option<&[usize]>) -> usize {
         let mut num_internal_links : usize = 0;
 
@@ -199,8 +201,8 @@ fn new_binomial(a_raw: u64, b_raw: u64) -> f64 {
     let mut partial = 0.0;
 
     for i in 0..(a_raw - b_raw) {
-        partial += ((b_raw + 1 + i) as f64).log10();
-        partial -= ((1 + i) as f64).log10();
+        partial += ((b_raw + 1 + i) as f64).log2();
+        partial -= ((1 + i) as f64).log2();
     }
 
     partial
@@ -209,7 +211,7 @@ fn new_binomial(a_raw: u64, b_raw: u64) -> f64 {
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
 // Better clusterings have a higher surprise value.
 #[allow(dead_code)]
-fn original_calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
+fn original_calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
     let num_nodes = g.node_count();
 
     let num_links : u64 = g.edge_count() as u64;
@@ -261,8 +263,8 @@ fn calculate_pid_array_min_max_distance(pid_array: Option<&[usize]>, num_nodes: 
 }
 
 fn expand_compact_pid(compact_pid_array: &[usize], pid_array: &mut [usize]) {
-    let mut partition_sizes = [0; MAX_NUMBER_OF_PARTITIONS];
-    let num_partition_elements = MAX_NUMBER_OF_PARTITIONS - 1;
+    let mut partition_sizes = [0; KERNEL_NUMBER_OF_PARTITIONS];
+    let num_partition_elements = KERNEL_NUMBER_OF_PARTITIONS - 1;
 
     let mut remaining_nodes = MAX_NUMBER_OF_NODES;
     let mut max_i = 0;
@@ -308,8 +310,8 @@ fn expand_compact_pid(compact_pid_array: &[usize], pid_array: &mut [usize]) {
     for i in 0..MAX_NUMBER_OF_NODES {
         let base_pid_step = compact_pid_array[offset + i];
 
-        for step in 0..MAX_NUMBER_OF_PARTITIONS - 1 {
-            let target_pid = (step + base_pid_step) % MAX_NUMBER_OF_PARTITIONS;
+        for step in 0..KERNEL_NUMBER_OF_PARTITIONS - 1 {
+            let target_pid = (step + base_pid_step) % KERNEL_NUMBER_OF_PARTITIONS;
             if partition_sizes[target_pid] > 0 {
                 partition_sizes[target_pid] -= 1;
                 pid_array[i] = target_pid;
@@ -321,7 +323,7 @@ fn expand_compact_pid(compact_pid_array: &[usize], pid_array: &mut [usize]) {
 
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
 // Better clusterings have a lower surprise value.
-fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
+fn calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
     let num_nodes = g.node_count();
 
     let num_links : u64 = g.edge_count() as u64;
@@ -349,7 +351,7 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, petgraph::Directed, usize>, pid
 // Implemented according to Chakraborty, Tanmoy, et al. "On the permanence of vertices in network communities."
 // Proceedings of the 20th ACM SIGKDD international conference on Knowledge discovery and data mining. 2014.
 // https://doi.org/10.1145/2623330.2623707
-fn node_permanence(nid: Option<usize>, v: Option<NodeIndex<usize>>, original_graph: &Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
+fn node_permanence(nid: Option<usize>, v: Option<NodeIndex<usize>>, original_graph: &Graph<NodeInfo, usize, Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
     let nid_unwrapped = nid.unwrap_or_default();
     let mut update_nid = false;
 
@@ -437,7 +439,7 @@ fn node_permanence(nid: Option<usize>, v: Option<NodeIndex<usize>>, original_gra
     }
 }
 
-fn calculate_permanence(original_graph: &Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
+fn calculate_permanence(original_graph: &Graph<NodeInfo, usize, Directed, usize>, finalized_core_placements: &[Option<usize>], pid_array: &[usize]) -> f64 {
     //original_graph.node_references().map(|v| node_permanence(None, Some(v.0), original_graph, finalized_core_placements, pid_array)).fold(0., |acc, x| acc + x) / original_graph.node_count() as f64
 
     original_graph.node_references().map(|v| node_permanence(None, Some(v.0), original_graph, finalized_core_placements, pid_array)).fold(0., |acc, x| acc + x) / original_graph.node_count() as f64 - calculate_pid_array_min_max_distance(Some(pid_array), original_graph.node_count())
@@ -467,8 +469,8 @@ fn max_edges_for_given_parallelism(num_nodes: usize, min_parallelism: usize) -> 
     res
 }
 
-fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Option<usize>, max_num_edges: usize, exact_num_edges: Option<usize>, min_parallelism: Option<usize>) -> petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> {
-    let mut g = GraphMap::<NodeInfo, usize, petgraph::Directed>::new();
+fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Option<usize>, max_num_edges: usize, exact_num_edges: Option<usize>, min_parallelism: Option<usize>) -> Graph<NodeInfo, usize, Directed, usize> {
+    let mut g = GraphMap::<NodeInfo, usize, Directed>::new();
     let mut rng = rand::thread_rng();
 
     let num_edges: usize;
@@ -520,7 +522,7 @@ fn gen_random_digraph(acyclic: bool, max_num_nodes: usize, exact_num_nodes: Opti
         g.add_edge(NodeInfo {numerical_id: a, partition_id: 0}, NodeInfo {numerical_id: b, partition_id: 0}, i);
     }
     
-    let g : petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = g.into_graph();
+    let g : Graph<NodeInfo, usize, Directed, usize> = g.into_graph();
 
     // The following is equivalent to 'return g;'
     g
@@ -542,7 +544,7 @@ fn gen_graph_image(file_name: &'static str, output_name: String) {
     let _dot_proc_output = Command::new("dot").arg("-Tpng").arg(file_name).arg("-o").arg(format!("{output_name}.png")).output().unwrap();
 }
 
-fn set_random_partitions(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize) {
+fn set_random_partitions(g: &mut Graph<NodeInfo, usize, Directed, usize>, max_partitions: usize) {
     let mut rng = rand::thread_rng();
     let num_nodes = g.node_count();
 
@@ -582,7 +584,7 @@ fn randomize_pid_array (pid_array: &mut [usize], num_nodes: usize, max_partition
 }
 
 #[allow(dead_code)]
-fn get_number_of_partitions(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) -> usize {
+fn get_number_of_partitions(g: &Graph<NodeInfo, usize, Directed, usize>) -> usize {
     let mut items_per_partition = HashMap::new();
 
     for v in g.node_references() {
@@ -593,7 +595,7 @@ fn get_number_of_partitions(g: &petgraph::Graph<NodeInfo, usize, petgraph::Direc
     items_per_partition.len()
 }
 
-fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: Option<&[Option<usize>]>, output_name: Option<String>) {
+fn visualize_graph(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[Option<usize>]>, output_name: Option<String>) {
     let null_out = |_, _| "".to_string();
     let mut g = g.clone();
 
@@ -615,7 +617,7 @@ fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
         }
     }
 
-    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &Graph<NodeInfo, usize, petgraph::Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
+    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &Graph<NodeInfo, usize, Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
         //let new_node_ref: NodeIndex;
         //new_node_ref = node_ref.into();
 
@@ -631,7 +633,7 @@ fn visualize_graph(g: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
     //calculate_surprise(&g);
 }
 
-fn set_random_partitions_and_visualize_graph(graph: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize) -> &Graph<NodeInfo, usize, petgraph::Directed, usize>{
+fn set_random_partitions_and_visualize_graph(graph: &mut Graph<NodeInfo, usize, Directed, usize>, max_partitions: usize) -> &Graph<NodeInfo, usize, Directed, usize>{
     set_random_partitions(graph, max_partitions);
     visualize_graph(&graph, None, None);
     graph
@@ -645,7 +647,7 @@ fn get_equally_hue_spaced_hsv_string(index: usize, num_items: usize) -> String {
 }
 
 /*
-fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, max_partitions: usize, num_iterations: usize, gen_image: bool) {
+fn evaluate_multiple_random_clusterings(original_graph: &Graph<NodeInfo, usize, Directed, usize>, max_partitions: usize, num_iterations: usize, gen_image: bool) {
     const CSV_PATH_WITH_SUFFIX : &str = "surprise.csv";
     const HIST_PATH_WITHOUT_SUFFIX : &str = "surprise_hist";
     
@@ -689,7 +691,7 @@ fn evaluate_multiple_random_clusterings(original_graph: &petgraph::Graph<NodeInf
 fn gen_sample_graph_image() {
     //let g = gen_sample_graph();
     let mut g = gen_random_digraph(true, 16, Some(16), 0, None, None);
-    let new_graph = set_random_partitions_and_visualize_graph(&mut g, MAX_NUMBER_OF_PARTITIONS);
+    let new_graph = set_random_partitions_and_visualize_graph(&mut g, KERNEL_NUMBER_OF_PARTITIONS);
     visualize_graph(&new_graph, None, None);
 }
 
@@ -697,7 +699,7 @@ fn gen_sample_graph_image() {
 #[allow(dead_code)]
 fn test_histogram_01() {
     let g = gen_random_digraph(true, 16, Some(16), 0, None, None);
-    evaluate_multiple_random_clusterings(&g, MAX_NUMBER_OF_PARTITIONS, 100000000, true);
+    evaluate_multiple_random_clusterings(&g, KERNEL_NUMBER_OF_PARTITIONS, 100000000, true);
 }
 */
 
@@ -740,26 +742,26 @@ use metaheuristics_nature::ObjFactory;
 // would only be dropped from memory once the
 // solver is also dropped.
 struct BaseSolver<'a> {
-    graph: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
+    graph: &'a Graph<NodeInfo, usize, Directed, usize>,
     core_bound: &'a [[f64; 2]]
 }
 
 impl Bounded for BaseSolver<'_> {
     fn bound(&self) -> &[[f64; 2]] {
         self.core_bound
-        //&[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES]
+        //&[[0., KERNEL_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES]
     }
 }
 
 struct CompactSolver<'a> {
-    graph: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
+    graph: &'a Graph<NodeInfo, usize, Directed, usize>,
     core_bound: &'a [[f64; 2]]
 }
 
 impl Bounded for CompactSolver<'_> {
     fn bound(&self) -> &[[f64; 2]] {
         self.core_bound
-        //&[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES]
+        //&[[0., KERNEL_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES]
     }
 }
 
@@ -773,11 +775,12 @@ fn round_float_array(float_arr: &[f64]) -> [usize; MAX_NUMBER_OF_NODES] {
     int_arr
 }
 
-fn floor_float_array(float_arr: &[f64]) -> [usize; MAX_NUMBER_OF_NODES] {
-    let mut int_arr: [usize; MAX_NUMBER_OF_NODES] = [0; MAX_NUMBER_OF_NODES];
+fn floor_float_array(float_arr: &[f64]) -> Vec<usize> {
+    //let mut int_arr: [usize; MAX_NUMBER_OF_NODES] = [0; MAX_NUMBER_OF_NODES];
+    let mut int_arr: Vec<usize> = vec![];
 
-    for i in 0..float_arr.len() {
-        int_arr[i] = float_arr[i] as usize % MAX_NUMBER_OF_PARTITIONS;
+    for f in float_arr {
+        int_arr.push(*f as usize % KERNEL_NUMBER_OF_PARTITIONS);
     }
 
     int_arr
@@ -799,7 +802,7 @@ impl ObjFactory for BaseSolver<'_> {
 
     //fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
     fn evaluate(&self, x: Vec<usize>) -> Self::Eval {
-        //400. + (-original_calculate_surprise(&self.graph, Some(&x))).log10()
+        //400. + (-original_calculate_surprise(&self.graph, Some(&x))).log2()
         //1000.0 + calculate_surprise(&self.graph, Some(&x))
         
         calculate_surprise(&self.graph, Some(&x))
@@ -809,11 +812,11 @@ impl ObjFactory for BaseSolver<'_> {
 
 impl ObjFactory for CompactSolver<'_> {
     //type Product = [usize; MAX_NUMBER_OF_NODES];
-    type Product = [usize; MAX_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES];
+    type Product = [usize; KERNEL_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES];
     type Eval = f64;
 
     fn produce(&self, xs: &[f64]) -> Self::Product {
-        const C_SIZE: usize = MAX_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES;
+        const C_SIZE: usize = KERNEL_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES;
         let mut compact_pid_array = [0; C_SIZE];
         
         for i in 0..C_SIZE {
@@ -824,8 +827,8 @@ impl ObjFactory for CompactSolver<'_> {
     }
 
     //fn evaluate(&self, x: [usize; MAX_NUMBER_OF_NODES]) -> Self::Eval {
-    fn evaluate(&self, x: [usize; MAX_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES]) -> Self::Eval {
-        //400. + (-original_calculate_surprise(&self.graph, Some(&x))).log10()
+    fn evaluate(&self, x: [usize; KERNEL_NUMBER_OF_PARTITIONS - 1 + MAX_NUMBER_OF_NODES]) -> Self::Eval {
+        //400. + (-original_calculate_surprise(&self.graph, Some(&x))).log2()
         //1000.0 + calculate_surprise(&self.graph, Some(&x))
         
         let mut pid_array = [0; MAX_NUMBER_OF_NODES];
@@ -962,7 +965,7 @@ fn get_empty_core_states(num_cores: usize) -> Vec<Option<ExecutionUnit>> {
     vec![None; num_cores]
 }
 
-fn get_num_pending_deps(graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>) -> Vec<usize>{
+fn get_num_pending_deps(graph: &Graph<NodeInfo, usize, Directed, usize>) -> Vec<usize>{
     let mut num_pending_deps = vec![0; graph.node_count()];
 
     for n in graph.node_references().enumerate() {
@@ -1001,8 +1004,8 @@ const SHARING_THRESHOLD: usize = 0;
 fn move_free_tasks_to_ready_queues(
         ready_queues: &mut Vec<Vec<ExecutionUnit>>,
         pid_array: &[usize],
-        g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
-        original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>,
+        g: &mut Graph<NodeInfo, usize, Directed, usize>,
+        original_graph: &Graph<NodeInfo, usize, Directed, usize>,
         task_was_sent_to_ready_queue: &mut [bool]
     ) {
     let dep_counts = get_num_pending_deps(&g);
@@ -1045,7 +1048,7 @@ fn move_free_tasks_to_ready_queues(
 // possible.
 // TODO: Let it update dep_counts in a way that is compatible with the changing number of nodes in
 // the graph
-fn retire_finished_tasks(g: &mut petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, core_states: &mut Vec<Option<ExecutionUnit>>, pid_array_option: Option<&mut [usize]>) -> Option<usize> {
+fn retire_finished_tasks(g: &mut Graph<NodeInfo, usize, Directed, usize>, core_states: &mut Vec<Option<ExecutionUnit>>, pid_array_option: Option<&mut [usize]>) -> Option<usize> {
     let mut min_step_for_more_retirements = usize::MAX;
     let apply_immediate_successor;
     let pid_array;
@@ -1137,7 +1140,7 @@ fn get_task_from_fullest_queue(ready_queues: &mut Vec<Vec<ExecutionUnit>>) -> Op
     None
 }
 
-fn num_foreign_incoming_edges(nid: usize, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, target_core: usize, finalized_core_placements: &mut [Option<usize>]) -> usize {
+fn num_foreign_incoming_edges(nid: usize, original_graph: &Graph<NodeInfo, usize, Directed, usize>, target_core: usize, finalized_core_placements: &mut [Option<usize>]) -> usize {
     let original_v = original_graph.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
 
     let mut num_foreign_edges = 0;
@@ -1154,7 +1157,7 @@ fn num_foreign_incoming_edges(nid: usize, original_graph: &petgraph::Graph<NodeI
     num_foreign_edges
 }
 
-fn num_native_edges(nid: usize, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [Option<usize>]) -> usize {
+fn num_native_edges(nid: usize, original_graph: &Graph<NodeInfo, usize, Directed, usize>, finalized_core_placements: &mut [Option<usize>]) -> usize {
     let original_v = original_graph.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
     let original_pid = original_graph.node_weight(original_v).unwrap().partition_id;
 
@@ -1185,7 +1188,7 @@ fn num_native_edges(nid: usize, original_graph: &petgraph::Graph<NodeInfo, usize
 
 const LIMIT_LATE_STEALING: bool = false;
 
-fn num_edges_to_target_core(nid: usize, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, target_core: usize, finalized_core_placements: &mut [Option<usize>]) -> usize {
+fn num_edges_to_target_core(nid: usize, original_graph: &Graph<NodeInfo, usize, Directed, usize>, target_core: usize, finalized_core_placements: &mut [Option<usize>]) -> usize {
     let original_v = original_graph.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
 
     let mut num_edges_to_target = 0;
@@ -1210,7 +1213,7 @@ fn num_edges_to_target_core(nid: usize, original_graph: &petgraph::Graph<NodeInf
     num_edges_to_target
 }
 
-fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [Option<usize>]) -> Option<ExecutionUnit> {
+fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>>, original_graph: &Graph<NodeInfo, usize, Directed, usize>, finalized_core_placements: &mut [Option<usize>]) -> Option<ExecutionUnit> {
     let mut lowest = usize::MAX;
     let mut li = 0;
     let mut lj = 0;
@@ -1240,7 +1243,7 @@ fn get_task_with_lowest_cluster_degree(ready_queues: &mut Vec<Vec<ExecutionUnit>
     None
 }
 
-fn get_task_with_lowest_extra_expected_misses(ready_queues: &mut Vec<Vec<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [Option<usize>], target_core: usize) -> Option<ExecutionUnit> {
+fn get_task_with_lowest_extra_expected_misses(ready_queues: &mut Vec<Vec<ExecutionUnit>>, original_graph: &Graph<NodeInfo, usize, Directed, usize>, finalized_core_placements: &mut [Option<usize>], target_core: usize) -> Option<ExecutionUnit> {
     let mut lowest = usize::MAX;
     let mut li = 0;
     let mut lj = 0;
@@ -1271,7 +1274,7 @@ fn get_task_with_lowest_extra_expected_misses(ready_queues: &mut Vec<Vec<Executi
     None
 }
 
-fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut Vec<Option<ExecutionUnit>>, original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, finalized_core_placements: &mut [Option<usize>]) -> (usize, usize) {
+fn feed_idle_cores(ready_queues: &mut Vec<Vec<ExecutionUnit>>, core_states: &mut Vec<Option<ExecutionUnit>>, original_graph: &Graph<NodeInfo, usize, Directed, usize>, finalized_core_placements: &mut [Option<usize>]) -> (usize, usize) {
     let mut num_misses = 0;
     let mut num_tasks_stolen = 0;
     let mut core_permutation: [usize; MAX_NUMBER_OF_PARTITIONS] = core::array::from_fn(|i| i);
@@ -1391,7 +1394,7 @@ fn build_bound_vec_for_compact_solver() -> Vec<[f64; 2]> {
     bound_vec
 }
 
-fn evaluate_execution_time_and_speedup(original_graph: &petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, pid_array: &[usize], num_generations: usize, immediate_successor: bool) -> ([Option<usize>; MAX_NUMBER_OF_NODES], ExecutionInfo) {
+fn evaluate_execution_time_and_speedup(original_graph: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usize], num_generations: usize, immediate_successor: bool) -> ([Option<usize>; MAX_NUMBER_OF_NODES], ExecutionInfo) {
     let mut ready_queues = get_empty_ready_task_queues(MAX_NUMBER_OF_PARTITIONS);
     let mut core_states = get_empty_core_states(MAX_NUMBER_OF_PARTITIONS);
 
@@ -1454,16 +1457,17 @@ struct RunConfig {
     probe_step_size: usize
 }
 
-fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]], config: &RunConfig, partial_solutions: &mut Vec<(usize, Vec<usize>)>) -> Solver<BaseSolver<'a>>{
+fn de_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]], config: &RunConfig, partial_solutions: &mut Vec<(usize, Vec<usize>)>) -> Solver<BaseSolver<'a>>{
     let start = Instant::now();
 
-    //let core_bound = &[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES][..];
+    //let core_bound = &[[0., KERNEL_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES][..];
 
     if report.is_some() {
         let report = report.unwrap();
 
         //let _s = Solver::build(De::default().f(0.5), BaseSolver{graph: &g, core_bound})
         let _s = Solver::build(De::default(), BaseSolver{graph: &g, core_bound})
+        //let _s = Solver::build(Fa::default().alpha(0.5), BaseSolver{graph: &g, core_bound})
             .task(|ctx| ctx.gen == num_generations as u64)
             .pop_num(population_size)
             //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
@@ -1502,6 +1506,7 @@ fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
             .task(|ctx| ctx.gen == num_generations as u64)
             .pop_num(population_size)
             //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
+            /*
             .pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(i, j)| {
                 if i < 2 {
                     return rng.range(ctx.func.bound_range(j))
@@ -1509,6 +1514,13 @@ fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
                     return 0.
                 }
             }))
+            */
+            .callback(|ctx| {
+                if ctx.gen % config.probe_step_size as u64 == 0 {
+                    partial_solutions.push((ctx.gen as usize, ctx.result()));
+                }
+                
+            })
             .solve()
             .unwrap();
 
@@ -1524,10 +1536,10 @@ fn de_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usiz
     }
 }
 
-fn de_compact_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]]) -> Solver<CompactSolver<'a>>{
+fn de_compact_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]]) -> Solver<CompactSolver<'a>>{
     let start = Instant::now();
 
-    //let core_bound = &[[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES][..];
+    //let core_bound = &[[0., KERNEL_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES][..];
 
     if report.is_some() {
         let report = report.unwrap();
@@ -1587,7 +1599,7 @@ fn de_compact_solve<'a>(g: &'a petgraph::Graph<NodeInfo, usize, petgraph::Direct
     }
 }
 
-fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num_communities: usize, max_comm_size_difference: usize) -> Graph<NodeInfo, usize, petgraph::Directed, usize> {
+fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num_communities: usize, max_comm_size_difference: usize) -> Graph<NodeInfo, usize, Directed, usize> {
     let mut rng = rand::thread_rng();
 
     let d = max_comm_size_difference;
@@ -1626,7 +1638,7 @@ fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num
         missing_nodes -= 1;
     }
 
-    let mut g = GraphMap::<NodeInfo, usize, petgraph::Directed>::with_capacity(num_nodes, num_edges);
+    let mut g = GraphMap::<NodeInfo, usize, Directed>::with_capacity(num_nodes, num_edges);
     assert!(g.node_count() == 0);
 
     for i in 0..num_nodes {
@@ -1656,8 +1668,40 @@ fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num
         }
     }
 
-    let g: petgraph::Graph<NodeInfo, usize, petgraph::Directed, usize> = g.into_graph();
+    let g: Graph<NodeInfo, usize, Directed, usize> = g.into_graph();
     g
+}
+
+fn graph_splitter(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usize]) -> Vec<Graph<NodeInfo, usize, Directed, usize>>{
+    // TODO: Extend this for graphs with more than two clusters
+    let mut g0 = g.clone();
+    let mut g1 = g.clone();
+
+    let mut graphs_vec: Vec<Graph<NodeInfo, usize, Directed, usize>> = vec![];
+
+    for n in g.node_references() {
+        let n_nid = g.node_weight(n.id()).unwrap().numerical_id;
+        let n_pid = pid_array[n_nid];
+
+        if n_pid == 0 {
+            let to_remove = g1.node_references().find(|x| x.1.numerical_id == n_nid).unwrap().id();
+            g1.remove_node(to_remove);
+        } else {
+            let to_remove = g0.node_references().find(|x| x.1.numerical_id == n_nid).unwrap().id();
+            g0.remove_node(to_remove);
+        }
+    }
+
+    graphs_vec.push(g0);
+    graphs_vec.push(g1);
+
+    graphs_vec
+}
+
+fn array_to_vec(pid_array: &[usize]) -> Vec<Option<usize>> {
+    let mut res: Vec<Option<usize>> = vec![];
+    pid_array.into_iter().for_each(|v| res.push(Some(*v)));
+    res
 }
 
 #[allow(dead_code)]
@@ -1666,11 +1710,11 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
 
-    let num_nodes = 32;
-    let num_edges = 32;
+    let num_nodes = 8;
+    let num_edges = 8;
     let min_parallelism = 16;
-    let mixing_coeff = 0.;
-    let num_communities = 8;
+    let mixing_coeff = 0.00;
+    let num_communities = 2;
     let max_comm_size_difference = 0;
 
     //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
@@ -1679,7 +1723,7 @@ fn test_metaheuristics_03(num_iter: usize) {
     println!("Time to generate random graph: {:?}", start.elapsed());
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
-    const NUM_EVALUATIONS: usize = 100;
+    const NUM_EVALUATIONS: usize = 50;
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
     const POP_SIZE: usize = 64;
@@ -1691,7 +1735,7 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut average_permanences: Vec<f64> = vec![];
     let mut immediate_successor_average: f64 = 0.;
 
-    let num_gen_options = [8000];
+    let num_gen_options = [4000];
     //let num_gen_options = [0];
     for num_generations in num_gen_options {
         let mut speedup_sum = 0.0;
@@ -1734,7 +1778,7 @@ fn test_metaheuristics_03(num_iter: usize) {
             //mut_core_bound[5] = [3., 3.];
             //let core_bound = &mut_core_bound;
 
-            let core_bound = &vec![[0., MAX_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
+            let core_bound = &vec![[0., KERNEL_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
             let conf = RunConfig{probe_step_size: 100};
             let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
             let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, true, core_bound, &conf, &mut partial_solutions);
@@ -1766,7 +1810,7 @@ fn test_metaheuristics_03(num_iter: usize) {
                 //let permanence = calculate_permanence(&g, &finalized_core_placements, pid_array);
 
                 partial_speedups.push((num_gen, speedup));
-                _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, fitness, speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, permanence).as_bytes()).unwrap();
+                _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, fitness, speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, permanence).as_bytes()).unwrap();
             }
             println!("Time to evaluate executions {} times and calculate speedup and permanence: {:?}", NUM_EVALUATIONS * partial_solutions.len(), calc_time);
 
@@ -1853,7 +1897,7 @@ fn test_metaheuristics_03(num_iter: usize) {
         average_speedups.push(average_speedup);
         average_fitnesses.push(average_fitness);
         average_permanences.push(average_permanence);
-        //_f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_generations, average_fitness, average_speedup, MAX_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, average_permanence).as_bytes()).unwrap();
+        //_f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_generations, average_fitness, average_speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, min_parallelism, average_permanence).as_bytes()).unwrap();
     }
 
     gen_speedup_bars(TEMP_FILE_NAME, "speedups");
@@ -1871,12 +1915,216 @@ fn test_metaheuristics_03(num_iter: usize) {
     println!("Time to generate surprise evolution graph: {:?}", start.elapsed());
 }
 
+fn merge_pid_arrays_from_solutions(solutions: &Vec<Solver<BaseSolver<'_>>>, graphs: &Vec<Graph<NodeInfo, usize, Directed, usize>>, num_nodes: usize) -> Vec<Option<usize>>{
+    let mut merged_pid_array: Vec<Option<usize>> = vec![None; num_nodes];
+    let pid_arrays: Vec<Vec<usize>> = solutions.into_iter().map(|s| s.result()).collect();
+
+    for (g_id, g) in graphs.into_iter().enumerate() {
+        for (_nid, w) in g.node_weights().enumerate() {
+            let original_nid = w.numerical_id;
+            let pid = pid_arrays[g_id][original_nid];
+
+            merged_pid_array[original_nid] = Some(pid + g_id * 2);
+            //println!("(g_id, _nid, original_nid, pid) = ({}, {}, {}, {})", g_id, nid, original_nid, pid);
+        }
+    }
+    
+    //println!("{:?}", pid_arrays);
+    //println!("{:?}", merged_pid_array);
+
+    merged_pid_array
+}
+
+fn merge_pid_arrays(pid_arrays: &Vec<Vec<Option<usize>>>, graphs: &Vec<Graph<NodeInfo, usize, Directed, usize>>, num_nodes: usize, target_num_partitions: usize) -> Vec<Option<usize>>{
+    let mut merged_pid_array: Vec<Option<usize>> = vec![None; num_nodes];
+
+    for (g_id, g) in graphs.into_iter().enumerate() {
+        for (_nid, w) in g.node_weights().enumerate() {
+            let original_nid = w.numerical_id;
+            let pid = pid_arrays[g_id][original_nid].unwrap();
+
+            merged_pid_array[original_nid] = Some(pid + g_id * target_num_partitions / 2);
+            //println!("(g_id, _nid, original_nid, pid) = ({}, {}, {}, {})", g_id, nid, original_nid, pid);
+        }
+    }
+    
+    //println!("{:?}", pid_arrays);
+    //println!("{:?}", merged_pid_array);
+
+    merged_pid_array
+}
+
+fn two_level_split_solve_merge(population_size: usize, num_generations: usize, target_num_partitions: usize, g: &Graph<NodeInfo, usize, Directed, usize>) {
+    let core_bound = &vec![[0., 2.]; MAX_NUMBER_OF_NODES];
+    let conf = RunConfig{probe_step_size: 1000};
+    let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
+    let _s = de_solve(&g, num_generations, population_size, None, None, true, core_bound, &conf, &mut partial_solutions);
+
+    let pid_array = _s.result();
+    let graph_vec = graph_splitter(&g, &pid_array);
+
+    let mut solutions: Vec<Solver<BaseSolver<'_>>> = vec![];
+
+    for i in 0..graph_vec.len() {
+        let g_ref = &graph_vec[i];
+        // TODO-PERFORMANCE: The sub-graphs might be processed much more quickly
+        //                   by building shorter `core_bound`s for them.
+        let sub_s = de_solve(g_ref, num_generations, population_size, None, None, true, core_bound, &conf, &mut partial_solutions);
+
+        visualize_graph(g_ref, Some(&array_to_vec(&sub_s.result())), Some(format!("sub_graph_{}", i)));
+
+        solutions.push(sub_s);
+    }
+
+    let merged_pid_array = merge_pid_arrays_from_solutions(&solutions, &graph_vec, g.node_count());
+    println!("{:?}", merged_pid_array);
+    visualize_graph(&g, Some(&merged_pid_array), Some(format!("merged_graph")));
+}
+
+fn expand_pid_array(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usize], expanded_size: usize) -> Vec<usize> {
+    let mut expanded_pid_array: Vec<usize> = vec![0; expanded_size];
+
+    for (nid, w) in g.node_weights().enumerate() {
+        let pid = pid_array[nid];
+        let original_nid = w.numerical_id;
+
+        expanded_pid_array[original_nid] = pid;
+    }
+
+    println!("{:?}", pid_array);
+    println!("{:?}", expanded_pid_array);
+
+    expanded_pid_array
+}
+
+// Here, pid_array is an optional pre-computed single-step optimization result
+fn split_solve_merge(population_size: usize, num_generations: usize, target_num_partitions: usize, g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[usize]>) -> (Vec<Option<usize>>, Vec<(usize, Vec<usize>)>) {
+    let mut core_bound = vec![[0., 2.]; MAX_NUMBER_OF_NODES];
+    
+    if target_num_partitions == MAX_NUMBER_OF_PARTITIONS {
+        core_bound[0] = [0.,0.];
+    }
+    
+    //let core_bound = &vec![[0., 2.]; g.node_count()];
+    let conf = RunConfig{probe_step_size: 800};
+    let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
+
+    //let pid_array = expand_pid_array(&g, &_s.result(), MAX_NUMBER_OF_NODES);
+
+    if target_num_partitions > 2 {
+        //let graph_vec = graph_splitter(&g, &pid_array);
+        let graph_vec = if pid_array.is_some() {
+            graph_splitter(&g, &pid_array.unwrap())
+        } else {
+            let _s = de_solve(&g, num_generations, population_size, None, None, false, &core_bound, &conf, &mut partial_solutions);
+            let pid_array = _s.result();
+            graph_splitter(&g, &pid_array)
+        };
+        let mut partial_pid_arrays: Vec<Vec<Option<usize>>> = vec![];
+
+        for i in 0..graph_vec.len() {
+            let g_ref = &graph_vec[i];
+            let (partial_pid_array, _) = split_solve_merge(population_size, (num_generations as f64 / 1.412) as usize, target_num_partitions / 2, g_ref, None);
+
+            if target_num_partitions == MAX_NUMBER_OF_PARTITIONS {
+                visualize_graph(g_ref, Some(&partial_pid_array), Some(format!("sub_graph_{}", i)));
+            }
+            partial_pid_arrays.push(partial_pid_array);
+        }
+
+        let merged_pid_array = merge_pid_arrays(&partial_pid_arrays, &graph_vec, MAX_NUMBER_OF_NODES, target_num_partitions);
+        //println!("{:?}", merged_pid_array);
+
+        return (merged_pid_array, partial_solutions);
+    } else {
+        if pid_array.is_some() {
+            return (array_to_vec(&pid_array.unwrap()), partial_solutions);
+        } else {
+            let _s = de_solve(&g, num_generations, population_size, None, None, false, &core_bound, &conf, &mut partial_solutions);
+            let pid_array = _s.result();
+            return (array_to_vec(&pid_array), partial_solutions);
+        }
+    }
+}
+
+fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
+    let mut unwrapped_pid_array: Vec<usize> = vec![];
+    pid_array.into_iter().for_each(|x| unwrapped_pid_array.push(x.unwrap()));
+
+    unwrapped_pid_array
+}
+
+fn test_multi_level_clustering() {
+    let num_nodes = 64;
+    let num_edges = 64;
+    //let mixing_coeff = 0.003;
+    let mixing_coeff = 0.000;
+    let num_communities = 8;
+    let max_comm_size_difference = 0;
+
+    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+
+    const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
+    const NUM_EVALUATIONS: usize = 10;
+
+    let mut _f = File::create(TEMP_FILE_NAME).unwrap();
+    const POP_SIZE: usize = 64;
+
+    let num_gen_options = [4000];
+    for num_generations in num_gen_options {
+        for _ in 0..NUM_EVALUATIONS {
+            //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
+            let start = Instant::now();
+            let (pid_array, partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
+            println!("Full multi-level solver elapsed time: {:?}", start.elapsed());
+
+            let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_generations, true);
+            let ims_permanence = calculate_permanence(&g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+            let ims_surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+            println!("Immediate succesor info: {:?}", immediate_successor_execution_info);
+            println!("Immediate succesor permanence: {:?}", ims_permanence);
+            println!("Immediate succesor surprise: {:?}", ims_surprise);
+
+            visualize_graph(&g, Some(&immediate_successor_finalized_placements), Some(format!("immediate_successor_{}", immediate_successor_execution_info.speedup)));
+
+            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_generations, false);
+            let permanence = calculate_permanence(&g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+            let surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&finalized_core_placements)));
+            println!("Multi-level solver info: {:?}", execution_info);
+            println!("Multi-level solver permanence: {:?}", permanence);
+            println!("Multi-level solver surprise: {:?}", surprise);
+
+            visualize_graph(&g, Some(&finalized_core_placements), Some(format!("merged_graph_{}", execution_info.speedup)));
+
+            for (num_gen, pid_array) in partial_solutions {
+                let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &g, Some(&pid_array));
+
+                let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_gen, true);
+                let ims_permanence = calculate_permanence(&g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+                let ims_surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+
+                _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
+
+                let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_gen, false);
+                let permanence = calculate_permanence(&g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+                let surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&finalized_core_placements)));
+
+                _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
+            }
+        }
+    }
+
+    gen_speedup_bars(TEMP_FILE_NAME, "speedups");
+}
+
 fn main() {
     //gen_sample_graph_image();
     //test_histogram_01();
     //test_metaheuristics_01();
     //test_metaheuristics_02();
-    test_metaheuristics_03(10);
+    
+    //test_metaheuristics_03(1);
+    test_multi_level_clustering();
     
     /*
     for i in [1,2,3] {
