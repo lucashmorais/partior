@@ -115,21 +115,26 @@ fn _gen_sample_graph() -> UnGraph<i32, ()> {
 }
 
 pub trait CanCountInternalLinks {
-    fn internal_edge_count(&self, pid_array: Option<&[usize]>) -> usize;
+    fn internal_edge_count_and_max_internal_links(&self, pid_array: Option<&[usize]>) -> (u64, u64);
     fn calculate_max_internal_links(&self, pid_array: Option<&[usize]>) -> usize;
 }
 
 impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
-    fn internal_edge_count(&self, pid_array: Option<&[usize]>) -> usize {
+    fn internal_edge_count_and_max_internal_links(&self, pid_array: Option<&[usize]>) -> (u64, u64) {
         let mut num_internal_links : usize = 0;
+        let mut items_per_partition = HashMap::new();
+        let mut max_internal_links = 0;
 
         if pid_array.is_none() {
             for v in self.node_references() {
                 let pid = v.weight().partition_id();
-                //println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
+                //println!("[internal_edge_count_and_max_internal_links]: Visiting node {:?}, belonging to partition {}", v, pid);
+
+                let hash_count = items_per_partition.entry(pid).or_insert(0);
+                *hash_count += 1;
 
                 for n in self.neighbors(v.id()) {
-                    //println!("[internal_edge_count]: Visiting neighbor {:?}", n);
+                    //println!("[internal_edge_count_and_max_internal_links]: Visiting neighbor {:?}", n);
                     let neighbor_weight = self.node_weight(n).unwrap();
                     let npid = neighbor_weight.partition_id;
                     
@@ -143,11 +148,15 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
                 let pid_array = pid_array.unwrap();
 
                 let pid = pid_array[v.weight().numerical_id];
+
+                let hash_count = items_per_partition.entry(pid).or_insert(0);
+                *hash_count += 1;
+
                 //let pid = pid_array[v.id().index()];
-                //println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
+                //println!("[internal_edge_count_and_max_internal_links]: Visiting node {:?}, belonging to partition {}", v, pid);
 
                 for n in self.neighbors(v.id()) {
-                    //println!("[internal_edge_count]: Visiting neighbor {:?}", n);
+                    //println!("[internal_edge_count_and_max_internal_links]: Visiting neighbor {:?}", n);
                     let neighbor_weight = self.node_weight(n).unwrap();
                     let npid = pid_array[neighbor_weight.numerical_id];
                     
@@ -158,8 +167,12 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
             }
         }
 
-        //println!("[internal_edge_count]: num_internal_links = {}", num_internal_links);
-        num_internal_links
+        for n in items_per_partition.values() {
+            max_internal_links += n * (n - 1) / 2;
+        }
+
+        //println!("[internal_edge_count_and_max_internal_links]: num_internal_links = {}", num_internal_links);
+        (num_internal_links as u64, max_internal_links)
     }
 
     fn calculate_max_internal_links(&self, pid_array: Option<&[usize]>) -> usize {
@@ -251,8 +264,8 @@ fn original_calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_
     let num_links : u64 = g.edge_count() as u64;
     let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
 
-    let num_internal_links : u64 = g.internal_edge_count(pid_array) as u64;
-    let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
+    let (num_internal_links, num_max_internal_links) : (u64, u64) = g.internal_edge_count_and_max_internal_links(pid_array);
+    //let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
 
     let top = min(num_links, num_max_internal_links);
     let mut surprise: f64 = 0.0;
@@ -363,8 +376,8 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Op
     let num_links : u64 = g.edge_count() as u64;
     let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
 
-    let num_internal_links : u64 = g.internal_edge_count(pid_array) as u64;
-    let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
+    let (num_internal_links, num_max_internal_links) : (u64, u64) = g.internal_edge_count_and_max_internal_links(pid_array);
+    //let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
 
     let mut surprise: f64 = 0.0;
 
@@ -2040,7 +2053,7 @@ fn split_solve_merge(population_size: usize, num_generations: usize, target_num_
     }
     
     //let core_bound = &vec![[0., 2.]; g.node_count()];
-    let conf = RunConfig{probe_step_size: 800};
+    let conf = RunConfig{probe_step_size: 200};
     let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
 
     //let pid_array = expand_pid_array(&g, &_s.result(), MAX_NUMBER_OF_NODES);
@@ -2058,7 +2071,7 @@ fn split_solve_merge(population_size: usize, num_generations: usize, target_num_
 
         for i in 0..graph_vec.len() {
             let g_ref = &graph_vec[i];
-            let (partial_pid_array, _) = split_solve_merge(population_size, (num_generations as f64 / 1.412) as usize, target_num_partitions / 2, g_ref, None);
+            let (partial_pid_array, _) = split_solve_merge(population_size, (num_generations as f64 / 1.000) as usize, target_num_partitions / 2, g_ref, None);
 
             if target_num_partitions == MAX_NUMBER_OF_PARTITIONS {
                 visualize_graph(g_ref, Some(&partial_pid_array), Some(format!("sub_graph_{}", i)));
@@ -2090,7 +2103,7 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
 
 fn test_multi_level_clustering() {
     let num_nodes = 64;
-    let num_edges = 64;
+    let num_edges = 128;
     //let mixing_coeff = 0.003;
     let mixing_coeff = 0.003;
     let num_communities = 8;
@@ -2102,10 +2115,13 @@ fn test_multi_level_clustering() {
     const NUM_SOLVER_EVALUATIONS: usize = 10;
     const NUM_SIMULATOR_EVALUATIONS: usize = 10;
 
-    let mut _f = File::create(TEMP_FILE_NAME).unwrap();
-    const POP_SIZE: usize = 32;
+    let mut best_surprise_per_algo = HashMap::new();
 
-    let num_gen_options = [4000];
+
+    let mut _f = File::create(TEMP_FILE_NAME).unwrap();
+    const POP_SIZE: usize = 64;
+
+    let num_gen_options = [1000];
     for num_generations in num_gen_options {
         for _ in 0..NUM_SOLVER_EVALUATIONS {
             //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
@@ -2120,7 +2136,11 @@ fn test_multi_level_clustering() {
             println!("Immediate succesor permanence: {:?}", ims_permanence);
             println!("Immediate succesor surprise: {:?}", ims_surprise);
 
-            visualize_graph(&g, Some(&immediate_successor_finalized_placements), Some(format!("immediate_successor_{}", immediate_successor_execution_info.speedup)));
+            let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
+            if immediate_successor_execution_info.speedup > algo_best {
+                visualize_graph(&g, Some(&immediate_successor_finalized_placements), Some(format!("immediate_successor_{}", immediate_successor_execution_info.speedup)));
+                best_surprise_per_algo.insert("Random Immediate Successor", immediate_successor_execution_info.speedup);
+            }
 
             let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_generations, false);
             let permanence = calculate_permanence(&g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
@@ -2129,7 +2149,11 @@ fn test_multi_level_clustering() {
             println!("Multi-level solver permanence: {:?}", permanence);
             println!("Multi-level solver surprise: {:?}", surprise);
 
-            visualize_graph(&g, Some(&finalized_core_placements), Some(format!("merged_graph_{}", execution_info.speedup)));
+            let algo_best = *best_surprise_per_algo.entry("Multi-level differential evolution").or_insert(f64::MIN);
+            if execution_info.speedup > algo_best {
+                visualize_graph(&g, Some(&finalized_core_placements), Some(format!("merged_graph_{}", execution_info.speedup)));
+                best_surprise_per_algo.insert("Multi-level differential evolution", execution_info.speedup);
+            }
 
             for (num_gen, pid_array) in partial_solutions {
                 let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &g, Some(&pid_array));
