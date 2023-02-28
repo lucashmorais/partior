@@ -24,11 +24,11 @@ use metaheuristics_nature::tests::TestObj;
 
 use once_cell::sync::Lazy;
 
-const MAX_NUMBER_OF_PARTITIONS: usize = 8;
+const MAX_NUMBER_OF_PARTITIONS: usize = 32;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
-const MAX_NUMBER_OF_NODES: usize = 64;
-const MAX_BINOMIAL_A: usize = 1024;
-const MAX_BINOMIAL_B: usize = 128;
+const MAX_NUMBER_OF_NODES: usize = 128;
+const MAX_BINOMIAL_A: usize = 550000;
+const MAX_BINOMIAL_B: usize = 1024;
 /*
 const MAX_BINOMIAL_A: usize = 0;
 const MAX_BINOMIAL_B: usize = 0;
@@ -227,7 +227,22 @@ fn new_binomial_matrix(max_a: usize, max_b: usize) -> Vec<Vec<f64>> {
     for i in 0..=max_a {
         for j in 0..=max_b {
             if j <= i {
-                v[i].push(new_binomial(i as u64, j as u64, true));
+                let mut partial = 0.0;
+
+                if i > (MAX_BINOMIAL_B) && i <= (MAX_BINOMIAL_A) && j <= (MAX_BINOMIAL_B) {
+                    partial = v[i - 1][j];
+                    partial += (i as f64).log2();
+                    partial -= ((i - j) as f64).log2();
+                } else {
+                    for k in 0..(i - j) {
+                        partial += ((j + 1 + k) as f64).log2();
+                        partial -= ((1 + k) as f64).log2();
+                    }
+                }
+
+                //println!("[new_binomial]: (i, j): ({}, {}) = {}", i, j, partial);
+
+                v[i].push(partial);
             }
         }
     }
@@ -244,12 +259,12 @@ fn new_binomial(a_raw: u64, b_raw: u64, force_compute: bool) -> f64 {
     } else {
         let mut partial = 0.0;
 
-        //println!("[new_binomial]: (a_raw, b_raw) = ({}, {})", a_raw, b_raw);
-
         for i in 0..(a_raw - b_raw) {
             partial += ((b_raw + 1 + i) as f64).log2();
             partial -= ((1 + i) as f64).log2();
         }
+
+        println!("[new_binomial]: (a_raw, b_raw): ({}, {}) = {}", a_raw, b_raw, partial);
 
         return partial;
     }
@@ -1501,7 +1516,8 @@ fn evaluate_execution_time_and_speedup(original_graph: &Graph<NodeInfo, usize, D
 }
 
 struct RunConfig {
-    probe_step_size: usize
+    probe_step_size: usize,
+    probe_step_vec: Option<Vec<usize>>
 }
 
 fn de_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]], config: &RunConfig, partial_solutions: &mut Vec<(usize, Vec<usize>)>) -> Solver<BaseSolver<'a>>{
@@ -1528,11 +1544,19 @@ fn de_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations:
             }))
             */
             .callback(|ctx| {
-                if ctx.gen % config.probe_step_size as u64 == 0 {
-                    report.push(ctx.best_f);
-                    partial_solutions.push((ctx.gen as usize, ctx.result()));
+                if config.probe_step_vec.is_none() {
+                    if ctx.gen % config.probe_step_size as u64 == 0 {
+                        report.push(ctx.best_f);
+                        partial_solutions.push((ctx.gen as usize, ctx.result()));
+                    }
+                } else {
+                    if config.probe_step_vec.clone().unwrap().contains(&(ctx.gen as usize)) {
+                        //println!("pushed at gen = {}", ctx.gen);
+                        //println!("linspace_vec: {:?}", config.probe_step_vec.clone().unwrap());
+                        report.push(ctx.best_f);
+                        partial_solutions.push((ctx.gen as usize, ctx.result()));
+                    }
                 }
-                
             })
             .solve()
             .unwrap();
@@ -1563,10 +1587,17 @@ fn de_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations:
             }))
             */
             .callback(|ctx| {
-                if ctx.gen % config.probe_step_size as u64 == 0 {
-                    partial_solutions.push((ctx.gen as usize, ctx.result()));
+                if config.probe_step_vec.is_none() {
+                    if ctx.gen % config.probe_step_size as u64 == 0 {
+                        partial_solutions.push((ctx.gen as usize, ctx.result()));
+                    }
+                } else {
+                    if config.probe_step_vec.clone().unwrap().contains(&(ctx.gen as usize)) {
+                        //println!("pushed at gen = {}", ctx.gen);
+                        //println!("linspace_vec: {:?}", config.probe_step_vec.clone().unwrap());
+                        partial_solutions.push((ctx.gen as usize, ctx.result()));
+                    }
                 }
-                
             })
             .solve()
             .unwrap();
@@ -1721,8 +1752,11 @@ fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num
 
 fn graph_splitter(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usize]) -> Vec<Graph<NodeInfo, usize, Directed, usize>>{
     // TODO: Extend this for graphs with more than two clusters
+    //let start = Instant::now();
     let mut g0 = g.clone();
     let mut g1 = g.clone();
+    //let duration = start.elapsed();
+    //println!("Time for cloning graphs: {:?}", duration);
 
     let mut graphs_vec: Vec<Graph<NodeInfo, usize, Directed, usize>> = vec![];
 
@@ -1757,11 +1791,11 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
 
-    let num_nodes = 8;
-    let num_edges = 8;
+    let num_nodes = 128;
+    let num_edges = 64;
     let min_parallelism = 16;
-    let mixing_coeff = 0.00;
-    let num_communities = 2;
+    let mixing_coeff = 0.003;
+    let num_communities = 32;
     let max_comm_size_difference = 0;
 
     //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
@@ -1826,7 +1860,7 @@ fn test_metaheuristics_03(num_iter: usize) {
             //let core_bound = &mut_core_bound;
 
             let core_bound = &vec![[0., KERNEL_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
-            let conf = RunConfig{probe_step_size: 100};
+            let conf = RunConfig{probe_step_size: 100, probe_step_vec: None};
             let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
             let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, true, core_bound, &conf, &mut partial_solutions);
 
@@ -2003,7 +2037,7 @@ fn merge_pid_arrays(pid_arrays: &Vec<Vec<Option<usize>>>, graphs: &Vec<Graph<Nod
 
 fn two_level_split_solve_merge(population_size: usize, num_generations: usize, target_num_partitions: usize, g: &Graph<NodeInfo, usize, Directed, usize>) {
     let core_bound = &vec![[0., 2.]; MAX_NUMBER_OF_NODES];
-    let conf = RunConfig{probe_step_size: 1000};
+    let conf = RunConfig{probe_step_size: 1000, probe_step_vec: None};
     let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
     let _s = de_solve(&g, num_generations, population_size, None, None, true, core_bound, &conf, &mut partial_solutions);
 
@@ -2048,12 +2082,10 @@ fn expand_pid_array(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[us
 fn split_solve_merge(population_size: usize, num_generations: usize, target_num_partitions: usize, g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[usize]>) -> (Vec<Option<usize>>, Vec<(usize, Vec<usize>)>) {
     let mut core_bound = vec![[0., 2.]; MAX_NUMBER_OF_NODES];
     
-    if target_num_partitions == MAX_NUMBER_OF_PARTITIONS {
-        core_bound[0] = [0.,0.];
-    }
+    core_bound[0] = [0.,0.];
     
     //let core_bound = &vec![[0., 2.]; g.node_count()];
-    let conf = RunConfig{probe_step_size: 200};
+    let conf = RunConfig{probe_step_size: 200, probe_step_vec: Some(linspace_vec(1, num_generations, 8))};
     let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
 
     //let pid_array = expand_pid_array(&g, &_s.result(), MAX_NUMBER_OF_NODES);
@@ -2071,11 +2103,13 @@ fn split_solve_merge(population_size: usize, num_generations: usize, target_num_
 
         for i in 0..graph_vec.len() {
             let g_ref = &graph_vec[i];
-            let (partial_pid_array, _) = split_solve_merge(population_size, (num_generations as f64 / 1.000) as usize, target_num_partitions / 2, g_ref, None);
+            let (partial_pid_array, _) = split_solve_merge(population_size, (num_generations as f64 / 1.412) as usize, target_num_partitions / 2, g_ref, None);
 
+            /*
             if target_num_partitions == MAX_NUMBER_OF_PARTITIONS {
                 visualize_graph(g_ref, Some(&partial_pid_array), Some(format!("sub_graph_{}", i)));
             }
+            */
             partial_pid_arrays.push(partial_pid_array);
         }
 
@@ -2087,6 +2121,7 @@ fn split_solve_merge(population_size: usize, num_generations: usize, target_num_
         if pid_array.is_some() {
             return (array_to_vec(&pid_array.unwrap()), partial_solutions);
         } else {
+            let conf = RunConfig{probe_step_size: usize::MAX, probe_step_vec: None};
             let _s = de_solve(&g, num_generations, population_size, None, None, false, &core_bound, &conf, &mut partial_solutions);
             let pid_array = _s.result();
             return (array_to_vec(&pid_array), partial_solutions);
@@ -2102,14 +2137,15 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
 }
 
 fn test_multi_level_clustering() {
-    let num_nodes = 64;
-    let num_edges = 128;
+    let num_nodes = 128;
+    let num_edges = 64;
     //let mixing_coeff = 0.003;
-    let mixing_coeff = 0.003;
-    let num_communities = 8;
+    let mixing_coeff = 0.000;
+    let num_communities = 32;
     let max_comm_size_difference = 0;
 
     let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    println!("Finished generating random graph.");
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
     const NUM_SOLVER_EVALUATIONS: usize = 10;
@@ -2117,11 +2153,10 @@ fn test_multi_level_clustering() {
 
     let mut best_surprise_per_algo = HashMap::new();
 
-
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
-    const POP_SIZE: usize = 64;
+    const POP_SIZE: usize = 32;
 
-    let num_gen_options = [1000];
+    let num_gen_options = [640];
     for num_generations in num_gen_options {
         for _ in 0..NUM_SOLVER_EVALUATIONS {
             //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
@@ -2178,12 +2213,36 @@ fn test_multi_level_clustering() {
     gen_speedup_bars(TEMP_FILE_NAME, "speedups");
 }
 
+fn linspace_vec(min_val: usize, max_val: usize, num_elements: usize) -> Vec<usize> {
+    let mut v: Vec<usize> = Vec::with_capacity(num_elements);
+
+    v.push(min_val);
+
+    let min_val = if min_val < 1 {
+        1
+    } else {
+        min_val
+    };
+
+    let min_l = (min_val as f64).log2();
+    let max_l = (max_val as f64).log2();
+    let step_size = (max_l - min_l) / ((num_elements - 1) as f64);
+
+    for i in 1..(num_elements - 1) {
+        v.push(f64::exp2(min_l + step_size * (i as f64)).round() as usize);
+    }
+
+    v.push(max_val);
+
+    v
+}
+
 fn main() {
     //gen_sample_graph_image();
     //test_histogram_01();
     //test_metaheuristics_01();
     //test_metaheuristics_02();
     
-    //test_metaheuristics_03(1);
+    //test_metaheuristics_03(10);
     test_multi_level_clustering();
 }
