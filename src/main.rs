@@ -22,9 +22,21 @@ use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
+use once_cell::sync::Lazy;
+
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
 const MAX_NUMBER_OF_NODES: usize = 64;
+const MAX_BINOMIAL_A: usize = 1024;
+const MAX_BINOMIAL_B: usize = 128;
+/*
+const MAX_BINOMIAL_A: usize = 0;
+const MAX_BINOMIAL_B: usize = 0;
+*/
+
+static BIN_MATRIX: Lazy<Vec<Vec<f64>>> = Lazy::new(|| {
+    new_binomial_matrix(MAX_BINOMIAL_A, MAX_BINOMIAL_B)
+});
 
 /*
 use num_integer::binomial;
@@ -196,17 +208,38 @@ fn half_factorial(a: f64, b: f64) -> f64 {
     partial
 }
 
-fn new_binomial(a_raw: u64, b_raw: u64) -> f64 {
-    // a_raw: large
-    // b_raw: small
-    let mut partial = 0.0;
+fn new_binomial_matrix(max_a: usize, max_b: usize) -> Vec<Vec<f64>> {
+    let mut v: Vec<Vec<f64>> = vec![vec![]; max_a + 1];
 
-    for i in 0..(a_raw - b_raw) {
-        partial += ((b_raw + 1 + i) as f64).log2();
-        partial -= ((1 + i) as f64).log2();
+    for i in 0..=max_a {
+        for j in 0..=max_b {
+            if j <= i {
+                v[i].push(new_binomial(i as u64, j as u64, true));
+            }
+        }
     }
 
-    partial
+    v
+}
+
+fn new_binomial(a_raw: u64, b_raw: u64, force_compute: bool) -> f64 {
+    // a_raw: large
+    // b_raw: small
+    
+    if !force_compute && a_raw <= (MAX_BINOMIAL_A as u64) && b_raw <= (MAX_BINOMIAL_B as u64) {
+        return BIN_MATRIX[a_raw as usize][b_raw as usize];
+    } else {
+        let mut partial = 0.0;
+
+        //println!("[new_binomial]: (a_raw, b_raw) = ({}, {})", a_raw, b_raw);
+
+        for i in 0..(a_raw - b_raw) {
+            partial += ((b_raw + 1 + i) as f64).log2();
+            partial -= ((1 + i) as f64).log2();
+        }
+
+        return partial;
+    }
 }
 
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
@@ -338,7 +371,7 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Op
     let top = min(num_links, num_max_internal_links);
 
     let j = (num_internal_links + top) / 2;
-    surprise += new_binomial(num_max_internal_links, j) + new_binomial(num_max_links - num_max_internal_links, num_links - j);
+    surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false);
 
     //surprise -= new_binomial(num_max_links, num_links);
 
@@ -2070,7 +2103,7 @@ fn test_multi_level_clustering() {
     const NUM_SIMULATOR_EVALUATIONS: usize = 10;
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
-    const POP_SIZE: usize = 64;
+    const POP_SIZE: usize = 32;
 
     let num_gen_options = [4000];
     for num_generations in num_gen_options {
@@ -2129,10 +2162,4 @@ fn main() {
     
     //test_metaheuristics_03(1);
     test_multi_level_clustering();
-    
-    /*
-    for i in [1,2,3] {
-        println!("{i}");
-    }
-    */
 }
