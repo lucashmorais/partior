@@ -2237,6 +2237,78 @@ fn linspace_vec(min_val: usize, max_val: usize, num_elements: usize) -> Vec<usiz
     v
 }
 
+fn tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>) -> Graph<NodeInfo, usize, Directed, usize> {
+    let mut g = original_graph.clone();
+    let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
+
+    g.clear_edges();
+
+    let node_refs: Vec<(petgraph::prelude::NodeIndex<usize>, &NodeInfo)> = original_graph.node_references().collect();
+    let first_node = node_refs[0].id();
+    let mut parent_vec: Vec<Option<petgraph::prelude::NodeIndex<usize>>> = vec![None; MAX_NUMBER_OF_NODES];
+
+    let mut node_queue = vec![first_node];    
+
+    'outer: loop {
+        while !node_queue.is_empty() {
+            let v = node_queue.pop().unwrap();
+            let v_id = original_graph.node_weight(v).unwrap().numerical_id;
+            was_added[v_id] = true;
+
+            for n in original_graph.neighbors_undirected(v) {
+                let n_id = original_graph.node_weight(n).unwrap().numerical_id;
+
+                if !was_added[n_id] {
+                    was_added[n_id] = true;
+                    parent_vec[n_id] = Some(v);
+                    node_queue.push(n);
+                }
+            }
+        }
+
+        for v in original_graph.node_references() {
+            let v_id = v.1.numerical_id;
+
+            if !was_added[v_id] {
+                node_queue.push(v.id());
+                continue 'outer;
+            }
+        }
+
+        break;
+    }
+
+    for i in 0..node_refs.len() {
+        let pseudo_child = node_refs[i].id();
+
+        if parent_vec[i].is_some() {
+            let pseudo_parent = parent_vec[i].unwrap();
+
+            if original_graph.contains_edge(pseudo_parent, pseudo_child) {
+                g.add_edge(pseudo_parent, pseudo_child, 1);
+            } else {
+                g.add_edge(pseudo_child, pseudo_parent, 1);
+            }
+        }
+    }
+
+    g
+}
+
+fn test_tree_transform() {
+    let num_nodes = 64;
+    let num_edges = 192;
+    let mixing_coeff = 0.001;
+    let num_communities = 8;
+    let max_comm_size_difference = 0;
+
+    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    visualize_graph(&g, None, Some("original_graph".to_string()));
+
+    let g_tree = tree_transform(&g);
+    visualize_graph(&g_tree, None, Some("tree_transformed_graph".to_string()));
+}
+
 fn main() {
     //gen_sample_graph_image();
     //test_histogram_01();
@@ -2244,5 +2316,6 @@ fn main() {
     //test_metaheuristics_02();
     
     //test_metaheuristics_03(10);
+    //test_tree_transform();
     test_multi_level_clustering();
 }
