@@ -6,6 +6,7 @@ use petgraph::visit::NodeRef;
 use petgraph::algo::{dijkstra, min_spanning_tree};
 use petgraph::data::FromElements;
 use petgraph::dot::{Dot, Config};
+use petgraph::visit::EdgeRef;
 use std::fs::File;
 use std::io::prelude::*;
 use std::fmt;
@@ -115,15 +116,16 @@ fn _gen_sample_graph() -> UnGraph<i32, ()> {
 }
 
 pub trait CanCountInternalLinks {
-    fn internal_edge_count_and_max_internal_links(&self, pid_array: Option<&[usize]>) -> (u64, u64);
+    fn internal_edge_count_and_max_internal_links(&self, pid_array: Option<&[usize]>) -> (u64, u64, u64);
     fn calculate_max_internal_links(&self, pid_array: Option<&[usize]>) -> usize;
 }
 
 impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
-    fn internal_edge_count_and_max_internal_links(&self, pid_array: Option<&[usize]>) -> (u64, u64) {
+    fn internal_edge_count_and_max_internal_links(&self, pid_array: Option<&[usize]>) -> (u64, u64, u64) {
         let mut num_internal_links : usize = 0;
         let mut items_per_partition = HashMap::new();
         let mut max_internal_links = 0;
+        let mut num_links = 0;
 
         if pid_array.is_none() {
             for v in self.node_references() {
@@ -138,9 +140,13 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
                     let neighbor_weight = self.node_weight(n).unwrap();
                     let npid = neighbor_weight.partition_id;
                     
+                    let edge = self.edges_connecting(v.id(), n.id()).last().unwrap();
+                    let edge_weight = edge.weight();
                     if  npid == pid {
-                        num_internal_links += 1;
+                        num_internal_links += *edge_weight;
                     }
+
+                    num_links += *edge_weight;
                 }
             }
         } else {
@@ -160,9 +166,13 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
                     let neighbor_weight = self.node_weight(n).unwrap();
                     let npid = pid_array[neighbor_weight.numerical_id];
                     
+                    let edge = self.edges_connecting(v.id(), n.id()).last().unwrap();
+                    let edge_weight = edge.weight();
                     if  npid == pid {
-                        num_internal_links += 1;
+                        num_internal_links += *edge_weight;
                     }
+
+                    num_links += *edge_weight;
                 }
             }
         }
@@ -171,8 +181,8 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
             max_internal_links += n * (n - 1) / 2;
         }
 
-        //println!("[internal_edge_count_and_max_internal_links]: num_internal_links = {}", num_internal_links);
-        (num_internal_links as u64, max_internal_links)
+        //[println!("[internal_edge_count_and_max_internal_links]: {}, {}, {}", num_internal_links, max_internal_links, num_links);
+        (num_internal_links as u64, max_internal_links, num_links as u64)
     }
 
     fn calculate_max_internal_links(&self, pid_array: Option<&[usize]>) -> usize {
@@ -276,10 +286,10 @@ fn new_binomial(a_raw: u64, b_raw: u64, force_compute: bool) -> f64 {
 fn original_calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
     let num_nodes = g.node_count();
 
-    let num_links : u64 = g.edge_count() as u64;
+    //let num_links : u64 = g.edge_count() as u64;
     let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
 
-    let (num_internal_links, num_max_internal_links) : (u64, u64) = g.internal_edge_count_and_max_internal_links(pid_array);
+    let (num_internal_links, num_max_internal_links, num_links) : (u64, u64, u64) = g.internal_edge_count_and_max_internal_links(pid_array);
     //let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
 
     let top = min(num_links, num_max_internal_links);
@@ -388,10 +398,10 @@ fn expand_compact_pid(compact_pid_array: &[usize], pid_array: &mut [usize]) {
 fn calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
     let num_nodes = g.node_count();
 
-    let num_links : u64 = g.edge_count() as u64;
+    //let num_links : u64 = g.edge_count() as u64;
     let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
 
-    let (num_internal_links, num_max_internal_links) : (u64, u64) = g.internal_edge_count_and_max_internal_links(pid_array);
+    let (num_internal_links, num_max_internal_links, num_links) : (u64, u64, u64) = g.internal_edge_count_and_max_internal_links(pid_array);
     //let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
 
     let mut surprise: f64 = 0.0;
@@ -2334,7 +2344,75 @@ fn tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>) -> G
         }
     }
 
-    g
+    let mut moved_weights = vec![0; MAX_NUMBER_OF_NODES];
+    for e in original_graph.edge_references() {
+        /*
+        println!("{:?}", e);
+        println!("{:?}", e.source());
+        println!("{:?}", e.target());
+        println!("Found in flattened graph? {:?}", g.contains_edge(e.source(), e.target()));
+        println!();
+        */
+
+        let s = e.source();
+        let t = e.target();
+
+        if !g.contains_edge(s, t) {
+            let s_id = original_graph.node_weight(s).unwrap().numerical_id;
+
+            moved_weights[s_id] += 1;
+        }
+    }
+
+    // TODO: PERFORMANCE
+    //       Avoid the extra pass for handling weighted
+    //       nodes with no outgoing edges.
+
+    for v in g.node_references() {
+        let v_id = g.node_weight(v.0).unwrap().numerical_id;
+        if moved_weights[v_id] > 0 && g.neighbors_directed(v.0, petgraph::Outgoing).count() == 0 {
+            // TODO: PERFORMANCE
+            // TODO: Prove that we are always able to escape from this loop
+            'outer: loop {
+                for a in g.neighbors_directed(v.0, petgraph::Incoming) {
+                    if moved_weights[v_id] > 0 {
+                        let a_id = g.node_weight(a.id()).unwrap().numerical_id;
+                        moved_weights[a_id] += 1;
+                        moved_weights[v_id] -= 1;
+                    } else {
+                        break 'outer;
+                    }
+                }
+
+            }
+        }
+    }
+
+    //println!("{:?}", moved_weights);
+    let mut weighted_g = g.clone();
+
+    for v in g.node_references() {
+        let v_id = g.node_weight(v.0).unwrap().numerical_id;
+        if moved_weights[v_id] > 0 {
+            'outer: loop {
+                for a in g.neighbors_directed(v.0, petgraph::Outgoing) {
+                    if moved_weights[v_id] > 0 {
+                        let edge = weighted_g.edges_connecting(v.0, a.id()).last().unwrap();
+                        let edge_weight = weighted_g.edge_weight_mut(edge.id()).unwrap();
+                        *edge_weight = *edge_weight + 1;
+                        moved_weights[v_id] -= 1;
+                    } else {
+                        break 'outer;
+                    }
+                }
+
+            }
+        }
+    }
+
+    //println!("{:?}", moved_weights);
+
+    weighted_g
 }
 
 fn test_tree_transform() {
