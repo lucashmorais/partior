@@ -11,6 +11,7 @@ metaheuristics-nature = { version = "8.0.4", features = ["rayon"] }
 #metaheuristics-nature = { version = "8.0.4" }
 num = "0.4.0"
 num-integer = "0.1.45"
+once_cell = "1.17.1"
 petgraph = "0.6.2"
 rand = "0.8.5"
 statrs = "0.16.0"

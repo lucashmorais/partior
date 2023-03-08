@@ -75,23 +75,28 @@ y1 = []
 y2 = []
 y3 = []
 
-for alg in alg_dict.keys():
+for (i, alg) in enumerate(alg_dict.keys()):
+    x.append([])
+    y1.append([])
+    y2.append([])
+    y3.append([])
+    print(f"{i}, {alg}")
     for num_cores in alg_dict[alg]:
         for min_parallelism in alg_dict[alg][num_cores]:
             for num_nodes in alg_dict[alg][num_cores][min_parallelism]:
                 for num_edges in alg_dict[alg][num_cores][min_parallelism][num_nodes]:
                     for gen in alg_dict[alg][num_cores][min_parallelism][num_nodes][num_edges]:
                         info = alg_dict[alg][num_cores][min_parallelism][num_nodes][num_edges][gen]
-                        x.append(gen)
+                        x[i].append(gen)
                         speedups = list(map(lambda x: x.speedup, info))
                         surprises = list(map(lambda x: x.surprise, info))
                         permanences = list(map(lambda x: x.permanence, info))
                         average_speedup = sum(speedups)/len(speedups)
                         average_surprise = sum(surprises)/len(surprises)
                         average_permanence = sum(permanences)/len(permanences)
-                        y1.append(average_speedup)
-                        y2.append(average_surprise)
-                        y3.append(average_permanence)
+                        y1[i].append(average_speedup)
+                        y2[i].append(average_surprise)
+                        y3[i].append(average_permanence)
 
 def line_graph(x, y1, y2, suffix):
     fig, ax = plt.subplots(constrained_layout=True)
@@ -103,11 +108,23 @@ def line_graph(x, y1, y2, suffix):
     ax2 = ax.twinx()
     ax2.set_ylabel(suffix)
      
-    ax.plot(x, y1, color ='maroon')
-    ax2.plot(x, y2, color ='yellow')
-    #ax2.plot(x, y3, color ='yellow')
     ax.set_xscale('log')
 
+    colors = ["#219ebc","#ffc533","#126782","#fda01a"]
+
+    for i in range(len(x)):
+        alg = ""
+        if i == 0:
+            alg = "Original"
+        else:
+            alg = "Tree"
+
+        ax.plot(x[i], y1[i], color = colors[i * 2], label=alg)
+        ax2.plot(x[i], y2[i], color = colors[i * 2 + 1], label=alg)
+        #ax2.plot(x[i], y3[i], color ='yellow')
+
+    ax.legend(loc = 'center left', bbox_to_anchor=(0.0, 0.57))
+    ax2.legend(loc = 'center left', bbox_to_anchor=(0.0, 0.43))
     plt.savefig(f"{output_path}_{suffix.lower()}.png")
 
 line_graph(x, y1, y2, 'Surprise')

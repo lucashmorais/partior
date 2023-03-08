@@ -22,9 +22,21 @@ use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
-const MAX_NUMBER_OF_PARTITIONS: usize = 8;
+use once_cell::sync::Lazy;
+
+const MAX_NUMBER_OF_PARTITIONS: usize = 32;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
-const MAX_NUMBER_OF_NODES: usize = 64;
+const MAX_NUMBER_OF_NODES: usize = 128;
+const MAX_BINOMIAL_A: usize = 550000;
+const MAX_BINOMIAL_B: usize = 1024;
+/*
+const MAX_BINOMIAL_A: usize = 0;
+const MAX_BINOMIAL_B: usize = 0;
+*/
+
+static BIN_MATRIX: Lazy<Vec<Vec<f64>>> = Lazy::new(|| {
+    new_binomial_matrix(MAX_BINOMIAL_A, MAX_BINOMIAL_B)
+});
 
 /*
 use num_integer::binomial;
@@ -103,21 +115,26 @@ fn _gen_sample_graph() -> UnGraph<i32, ()> {
 }
 
 pub trait CanCountInternalLinks {
-    fn internal_edge_count(&self, pid_array: Option<&[usize]>) -> usize;
+    fn internal_edge_count_and_max_internal_links(&self, pid_array: Option<&[usize]>) -> (u64, u64);
     fn calculate_max_internal_links(&self, pid_array: Option<&[usize]>) -> usize;
 }
 
 impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
-    fn internal_edge_count(&self, pid_array: Option<&[usize]>) -> usize {
+    fn internal_edge_count_and_max_internal_links(&self, pid_array: Option<&[usize]>) -> (u64, u64) {
         let mut num_internal_links : usize = 0;
+        let mut items_per_partition = HashMap::new();
+        let mut max_internal_links = 0;
 
         if pid_array.is_none() {
             for v in self.node_references() {
                 let pid = v.weight().partition_id();
-                //println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
+                //println!("[internal_edge_count_and_max_internal_links]: Visiting node {:?}, belonging to partition {}", v, pid);
+
+                let hash_count = items_per_partition.entry(pid).or_insert(0);
+                *hash_count += 1;
 
                 for n in self.neighbors(v.id()) {
-                    //println!("[internal_edge_count]: Visiting neighbor {:?}", n);
+                    //println!("[internal_edge_count_and_max_internal_links]: Visiting neighbor {:?}", n);
                     let neighbor_weight = self.node_weight(n).unwrap();
                     let npid = neighbor_weight.partition_id;
                     
@@ -131,10 +148,15 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
                 let pid_array = pid_array.unwrap();
 
                 let pid = pid_array[v.weight().numerical_id];
-                //println!("[internal_edge_count]: Visiting node {:?}, belonging to partition {}", v, pid);
+
+                let hash_count = items_per_partition.entry(pid).or_insert(0);
+                *hash_count += 1;
+
+                //let pid = pid_array[v.id().index()];
+                //println!("[internal_edge_count_and_max_internal_links]: Visiting node {:?}, belonging to partition {}", v, pid);
 
                 for n in self.neighbors(v.id()) {
-                    //println!("[internal_edge_count]: Visiting neighbor {:?}", n);
+                    //println!("[internal_edge_count_and_max_internal_links]: Visiting neighbor {:?}", n);
                     let neighbor_weight = self.node_weight(n).unwrap();
                     let npid = pid_array[neighbor_weight.numerical_id];
                     
@@ -145,8 +167,12 @@ impl CanCountInternalLinks for Graph<NodeInfo, usize, Directed, usize> {
             }
         }
 
-        //println!("[internal_edge_count]: num_internal_links = {}", num_internal_links);
-        num_internal_links
+        for n in items_per_partition.values() {
+            max_internal_links += n * (n - 1) / 2;
+        }
+
+        //println!("[internal_edge_count_and_max_internal_links]: num_internal_links = {}", num_internal_links);
+        (num_internal_links as u64, max_internal_links)
     }
 
     fn calculate_max_internal_links(&self, pid_array: Option<&[usize]>) -> usize {
@@ -195,17 +221,53 @@ fn half_factorial(a: f64, b: f64) -> f64 {
     partial
 }
 
-fn new_binomial(a_raw: u64, b_raw: u64) -> f64 {
-    // a_raw: large
-    // b_raw: small
-    let mut partial = 0.0;
+fn new_binomial_matrix(max_a: usize, max_b: usize) -> Vec<Vec<f64>> {
+    let mut v: Vec<Vec<f64>> = vec![vec![]; max_a + 1];
 
-    for i in 0..(a_raw - b_raw) {
-        partial += ((b_raw + 1 + i) as f64).log2();
-        partial -= ((1 + i) as f64).log2();
+    for i in 0..=max_a {
+        for j in 0..=max_b {
+            if j <= i {
+                let mut partial = 0.0;
+
+                if i > (MAX_BINOMIAL_B) && i <= (MAX_BINOMIAL_A) && j <= (MAX_BINOMIAL_B) {
+                    partial = v[i - 1][j];
+                    partial += (i as f64).log2();
+                    partial -= ((i - j) as f64).log2();
+                } else {
+                    for k in 0..(i - j) {
+                        partial += ((j + 1 + k) as f64).log2();
+                        partial -= ((1 + k) as f64).log2();
+                    }
+                }
+
+                //println!("[new_binomial]: (i, j): ({}, {}) = {}", i, j, partial);
+
+                v[i].push(partial);
+            }
+        }
     }
 
-    partial
+    v
+}
+
+fn new_binomial(a_raw: u64, b_raw: u64, force_compute: bool) -> f64 {
+    // a_raw: large
+    // b_raw: small
+    
+    if !force_compute && a_raw <= (MAX_BINOMIAL_A as u64) && b_raw <= (MAX_BINOMIAL_B as u64) {
+        return BIN_MATRIX[a_raw as usize][b_raw as usize];
+    } else {
+        let mut partial = 0.0;
+
+        for i in 0..(a_raw - b_raw) {
+            partial += ((b_raw + 1 + i) as f64).log2();
+            partial -= ((1 + i) as f64).log2();
+        }
+
+        println!("[new_binomial]: (a_raw, b_raw): ({}, {}) = {}", a_raw, b_raw, partial);
+
+        return partial;
+    }
 }
 
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
@@ -217,8 +279,8 @@ fn original_calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_
     let num_links : u64 = g.edge_count() as u64;
     let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
 
-    let num_internal_links : u64 = g.internal_edge_count(pid_array) as u64;
-    let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
+    let (num_internal_links, num_max_internal_links) : (u64, u64) = g.internal_edge_count_and_max_internal_links(pid_array);
+    //let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
 
     let top = min(num_links, num_max_internal_links);
     let mut surprise: f64 = 0.0;
@@ -329,15 +391,15 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Op
     let num_links : u64 = g.edge_count() as u64;
     let num_max_links : u64 = (num_nodes * (num_nodes - 1) / 2) as u64;
 
-    let num_internal_links : u64 = g.internal_edge_count(pid_array) as u64;
-    let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
+    let (num_internal_links, num_max_internal_links) : (u64, u64) = g.internal_edge_count_and_max_internal_links(pid_array);
+    //let num_max_internal_links = g.calculate_max_internal_links(pid_array) as u64;
 
     let mut surprise: f64 = 0.0;
 
     let top = min(num_links, num_max_internal_links);
 
     let j = (num_internal_links + top) / 2;
-    surprise += new_binomial(num_max_internal_links, j) + new_binomial(num_max_links - num_max_internal_links, num_links - j);
+    surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false);
 
     //surprise -= new_binomial(num_max_links, num_links);
 
@@ -1454,7 +1516,8 @@ fn evaluate_execution_time_and_speedup(original_graph: &Graph<NodeInfo, usize, D
 }
 
 struct RunConfig {
-    probe_step_size: usize
+    probe_step_size: usize,
+    probe_step_vec: Option<Vec<usize>>
 }
 
 fn de_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations: usize, population_size: usize, report: Option<&mut Vec<f64>>, finalized_core_placements: Option<&'a [Option<usize>]>, verbose: bool, core_bound: &'a [[f64; 2]], config: &RunConfig, partial_solutions: &mut Vec<(usize, Vec<usize>)>) -> Solver<BaseSolver<'a>>{
@@ -1481,11 +1544,19 @@ fn de_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations:
             }))
             */
             .callback(|ctx| {
-                if ctx.gen % config.probe_step_size as u64 == 0 {
-                    report.push(ctx.best_f);
-                    partial_solutions.push((ctx.gen as usize, ctx.result()));
+                if config.probe_step_vec.is_none() {
+                    if ctx.gen % config.probe_step_size as u64 == 0 {
+                        report.push(ctx.best_f);
+                        partial_solutions.push((ctx.gen as usize, ctx.result()));
+                    }
+                } else {
+                    if config.probe_step_vec.clone().unwrap().contains(&(ctx.gen as usize)) {
+                        //println!("pushed at gen = {}", ctx.gen);
+                        //println!("linspace_vec: {:?}", config.probe_step_vec.clone().unwrap());
+                        report.push(ctx.best_f);
+                        partial_solutions.push((ctx.gen as usize, ctx.result()));
+                    }
                 }
-                
             })
             .solve()
             .unwrap();
@@ -1516,10 +1587,17 @@ fn de_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations:
             }))
             */
             .callback(|ctx| {
-                if ctx.gen % config.probe_step_size as u64 == 0 {
-                    partial_solutions.push((ctx.gen as usize, ctx.result()));
+                if config.probe_step_vec.is_none() {
+                    if ctx.gen % config.probe_step_size as u64 == 0 {
+                        partial_solutions.push((ctx.gen as usize, ctx.result()));
+                    }
+                } else {
+                    if config.probe_step_vec.clone().unwrap().contains(&(ctx.gen as usize)) {
+                        //println!("pushed at gen = {}", ctx.gen);
+                        //println!("linspace_vec: {:?}", config.probe_step_vec.clone().unwrap());
+                        partial_solutions.push((ctx.gen as usize, ctx.result()));
+                    }
                 }
-                
             })
             .solve()
             .unwrap();
@@ -1674,8 +1752,11 @@ fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num
 
 fn graph_splitter(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usize]) -> Vec<Graph<NodeInfo, usize, Directed, usize>>{
     // TODO: Extend this for graphs with more than two clusters
+    //let start = Instant::now();
     let mut g0 = g.clone();
     let mut g1 = g.clone();
+    //let duration = start.elapsed();
+    //println!("Time for cloning graphs: {:?}", duration);
 
     let mut graphs_vec: Vec<Graph<NodeInfo, usize, Directed, usize>> = vec![];
 
@@ -1710,11 +1791,11 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
 
-    let num_nodes = 8;
-    let num_edges = 8;
+    let num_nodes = 128;
+    let num_edges = 64;
     let min_parallelism = 16;
-    let mixing_coeff = 0.00;
-    let num_communities = 2;
+    let mixing_coeff = 0.003;
+    let num_communities = 32;
     let max_comm_size_difference = 0;
 
     //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
@@ -1779,7 +1860,7 @@ fn test_metaheuristics_03(num_iter: usize) {
             //let core_bound = &mut_core_bound;
 
             let core_bound = &vec![[0., KERNEL_NUMBER_OF_PARTITIONS as f64]; MAX_NUMBER_OF_NODES];
-            let conf = RunConfig{probe_step_size: 100};
+            let conf = RunConfig{probe_step_size: 100, probe_step_vec: None};
             let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
             let _s = de_solve(&g, num_generations, POP_SIZE, Some(&mut report), None, true, core_bound, &conf, &mut partial_solutions);
 
@@ -1956,7 +2037,7 @@ fn merge_pid_arrays(pid_arrays: &Vec<Vec<Option<usize>>>, graphs: &Vec<Graph<Nod
 
 fn two_level_split_solve_merge(population_size: usize, num_generations: usize, target_num_partitions: usize, g: &Graph<NodeInfo, usize, Directed, usize>) {
     let core_bound = &vec![[0., 2.]; MAX_NUMBER_OF_NODES];
-    let conf = RunConfig{probe_step_size: 1000};
+    let conf = RunConfig{probe_step_size: 1000, probe_step_vec: None};
     let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
     let _s = de_solve(&g, num_generations, population_size, None, None, true, core_bound, &conf, &mut partial_solutions);
 
@@ -2001,12 +2082,10 @@ fn expand_pid_array(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[us
 fn split_solve_merge(population_size: usize, num_generations: usize, target_num_partitions: usize, g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[usize]>) -> (Vec<Option<usize>>, Vec<(usize, Vec<usize>)>) {
     let mut core_bound = vec![[0., 2.]; MAX_NUMBER_OF_NODES];
     
-    if target_num_partitions == MAX_NUMBER_OF_PARTITIONS {
-        core_bound[0] = [0.,0.];
-    }
+    core_bound[0] = [0.,0.];
     
     //let core_bound = &vec![[0., 2.]; g.node_count()];
-    let conf = RunConfig{probe_step_size: 800};
+    let conf = RunConfig{probe_step_size: 200, probe_step_vec: Some(linspace_vec(1, num_generations, 8))};
     let mut partial_solutions: Vec<(usize, Vec<usize>)> = vec![];
 
     //let pid_array = expand_pid_array(&g, &_s.result(), MAX_NUMBER_OF_NODES);
@@ -2026,9 +2105,11 @@ fn split_solve_merge(population_size: usize, num_generations: usize, target_num_
             let g_ref = &graph_vec[i];
             let (partial_pid_array, _) = split_solve_merge(population_size, (num_generations as f64 / 1.412) as usize, target_num_partitions / 2, g_ref, None);
 
+            /*
             if target_num_partitions == MAX_NUMBER_OF_PARTITIONS {
                 visualize_graph(g_ref, Some(&partial_pid_array), Some(format!("sub_graph_{}", i)));
             }
+            */
             partial_pid_arrays.push(partial_pid_array);
         }
 
@@ -2040,6 +2121,7 @@ fn split_solve_merge(population_size: usize, num_generations: usize, target_num_
         if pid_array.is_some() {
             return (array_to_vec(&pid_array.unwrap()), partial_solutions);
         } else {
+            let conf = RunConfig{probe_step_size: usize::MAX, probe_step_vec: None};
             let _s = de_solve(&g, num_generations, population_size, None, None, false, &core_bound, &conf, &mut partial_solutions);
             let pid_array = _s.result();
             return (array_to_vec(&pid_array), partial_solutions);
@@ -2054,67 +2136,219 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
     unwrapped_pid_array
 }
 
-fn test_multi_level_clustering() {
+fn test_multi_level_clustering(use_flattened_graph: bool) {
     let num_nodes = 64;
     let num_edges = 64;
     //let mixing_coeff = 0.003;
-    let mixing_coeff = 0.000;
+    let mixing_coeff = 0.003;
     let num_communities = 8;
     let max_comm_size_difference = 0;
 
-    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    let original_g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    let g = if use_flattened_graph {
+        tree_transform(&original_g)
+    } else {
+        original_g.clone()
+    };
+    println!("Finished generating random graph.");
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
-    const NUM_EVALUATIONS: usize = 10;
+    const NUM_SOLVER_EVALUATIONS: usize = 10;
+    const NUM_SIMULATOR_EVALUATIONS: usize = 10;
+
+    let mut best_surprise_per_algo = HashMap::new();
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
     const POP_SIZE: usize = 64;
 
-    let num_gen_options = [4000];
+    let num_gen_options = [2000];
     for num_generations in num_gen_options {
-        for _ in 0..NUM_EVALUATIONS {
+        for _ in 0..NUM_SOLVER_EVALUATIONS {
             //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
             let start = Instant::now();
+
             let (pid_array, partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
             println!("Full multi-level solver elapsed time: {:?}", start.elapsed());
 
-            let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_generations, true);
-            let ims_permanence = calculate_permanence(&g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
-            let ims_surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+            let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, true);
+            let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+            let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
             println!("Immediate succesor info: {:?}", immediate_successor_execution_info);
             println!("Immediate succesor permanence: {:?}", ims_permanence);
             println!("Immediate succesor surprise: {:?}", ims_surprise);
 
-            visualize_graph(&g, Some(&immediate_successor_finalized_placements), Some(format!("immediate_successor_{}", immediate_successor_execution_info.speedup)));
+            let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
+            if immediate_successor_execution_info.speedup > algo_best {
+                visualize_graph(&original_g, Some(&immediate_successor_finalized_placements), Some(format!("immediate_successor_{}", immediate_successor_execution_info.speedup)));
+                best_surprise_per_algo.insert("Random Immediate Successor", immediate_successor_execution_info.speedup);
+            }
 
-            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_generations, false);
-            let permanence = calculate_permanence(&g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
-            let surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&finalized_core_placements)));
+            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, false);
+            let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+            let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
             println!("Multi-level solver info: {:?}", execution_info);
             println!("Multi-level solver permanence: {:?}", permanence);
             println!("Multi-level solver surprise: {:?}", surprise);
 
-            visualize_graph(&g, Some(&finalized_core_placements), Some(format!("merged_graph_{}", execution_info.speedup)));
+            let algo_best = *best_surprise_per_algo.entry("Multi-level differential evolution").or_insert(f64::MIN);
+            if execution_info.speedup > algo_best {
+                visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_{}", execution_info.speedup)));
+                best_surprise_per_algo.insert("Multi-level differential evolution", execution_info.speedup);
+            }
+
+            let tree_g = tree_transform(&original_g);
+            let (tree_pid_array, tree_partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &tree_g, None);
+
+            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&tree_pid_array), num_generations, false);
+            let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+            let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
+            println!("Multi-level tree solver info: {:?}", execution_info);
+            println!("Multi-level tree solver permanence: {:?}", permanence);
+            println!("Multi-level tree solver surprise: {:?}", surprise);
+
+            let algo_best = *best_surprise_per_algo.entry("Multi-level tree differential evolution").or_insert(f64::MIN);
+            if execution_info.speedup > algo_best {
+                visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_tree_{}", execution_info.speedup)));
+                best_surprise_per_algo.insert("Multi-level tree differential evolution", execution_info.speedup);
+            }
 
             for (num_gen, pid_array) in partial_solutions {
                 let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &g, Some(&pid_array));
 
-                let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_gen, true);
-                let ims_permanence = calculate_permanence(&g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
-                let ims_surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+                for _ in 0..NUM_SIMULATOR_EVALUATIONS {
+                    let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
+                    let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+                    let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
 
-                _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
+                    _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
 
-                let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&g, &unwrap_pid_array(&pid_array), num_gen, false);
-                let permanence = calculate_permanence(&g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
-                let surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&finalized_core_placements)));
+                    let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, false);
+                    let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+                    let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
 
-                _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
+                    _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
+                }
+            }
+
+            for (num_gen, pid_array) in tree_partial_solutions {
+                let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &tree_g, Some(&pid_array));
+
+                for _ in 0..NUM_SIMULATOR_EVALUATIONS {
+                    let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
+                    let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+                    let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+
+                    _f.write(format!("Differential Evolution Tree,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
+
+                    let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, false);
+                    let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+                    let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
+
+                    _f.write(format!("Differential Evolution Tree,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
+                }
             }
         }
     }
 
+    visualize_graph(&tree_transform(&original_g), None, Some("ground_truth_flattened".to_string()));
+    visualize_graph(&original_g, None, Some("ground_truth_original".to_string()));
     gen_speedup_bars(TEMP_FILE_NAME, "speedups");
+}
+
+fn linspace_vec(min_val: usize, max_val: usize, num_elements: usize) -> Vec<usize> {
+    let mut v: Vec<usize> = Vec::with_capacity(num_elements);
+
+    v.push(min_val);
+
+    let min_val = if min_val < 1 {
+        1
+    } else {
+        min_val
+    };
+
+    let min_l = (min_val as f64).log2();
+    let max_l = (max_val as f64).log2();
+    let step_size = (max_l - min_l) / ((num_elements - 1) as f64);
+
+    for i in 1..(num_elements - 1) {
+        v.push(f64::exp2(min_l + step_size * (i as f64)).round() as usize);
+    }
+
+    v.push(max_val);
+
+    v
+}
+
+fn tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>) -> Graph<NodeInfo, usize, Directed, usize> {
+    let mut g = original_graph.clone();
+    let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
+
+    g.clear_edges();
+
+    let node_refs: Vec<(petgraph::prelude::NodeIndex<usize>, &NodeInfo)> = original_graph.node_references().collect();
+    let first_node = node_refs[0].id();
+    let mut parent_vec: Vec<Option<petgraph::prelude::NodeIndex<usize>>> = vec![None; MAX_NUMBER_OF_NODES];
+
+    let mut node_queue = vec![first_node];    
+
+    'outer: loop {
+        while !node_queue.is_empty() {
+            let v = node_queue.pop().unwrap();
+            let v_id = original_graph.node_weight(v).unwrap().numerical_id;
+            was_added[v_id] = true;
+
+            for n in original_graph.neighbors_undirected(v) {
+                let n_id = original_graph.node_weight(n).unwrap().numerical_id;
+
+                if !was_added[n_id] {
+                    was_added[n_id] = true;
+                    parent_vec[n_id] = Some(v);
+                    node_queue.push(n);
+                }
+            }
+        }
+
+        for v in original_graph.node_references() {
+            let v_id = v.1.numerical_id;
+
+            if !was_added[v_id] {
+                node_queue.push(v.id());
+                continue 'outer;
+            }
+        }
+
+        break;
+    }
+
+    for i in 0..node_refs.len() {
+        let pseudo_child = node_refs[i].id();
+
+        if parent_vec[i].is_some() {
+            let pseudo_parent = parent_vec[i].unwrap();
+
+            if original_graph.contains_edge(pseudo_parent, pseudo_child) {
+                g.add_edge(pseudo_parent, pseudo_child, 1);
+            } else {
+                g.add_edge(pseudo_child, pseudo_parent, 1);
+            }
+        }
+    }
+
+    g
+}
+
+fn test_tree_transform() {
+    let num_nodes = 64;
+    let num_edges = 192;
+    let mixing_coeff = 0.001;
+    let num_communities = 8;
+    let max_comm_size_difference = 0;
+
+    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    visualize_graph(&g, None, Some("original_graph".to_string()));
+
+    let g_tree = tree_transform(&g);
+    visualize_graph(&g_tree, None, Some("tree_transformed_graph".to_string()));
 }
 
 fn main() {
@@ -2123,12 +2357,7 @@ fn main() {
     //test_metaheuristics_01();
     //test_metaheuristics_02();
     
-    //test_metaheuristics_03(1);
-    test_multi_level_clustering();
-    
-    /*
-    for i in [1,2,3] {
-        println!("{i}");
-    }
-    */
+    //test_metaheuristics_03(10);
+    //test_tree_transform();
+    test_multi_level_clustering(false);
 }
