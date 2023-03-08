@@ -2171,8 +2171,8 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
             println!("Full multi-level solver elapsed time: {:?}", start.elapsed());
 
             let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, true);
-            let ims_permanence = calculate_permanence(&g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
-            let ims_surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+            let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+            let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
             println!("Immediate succesor info: {:?}", immediate_successor_execution_info);
             println!("Immediate succesor permanence: {:?}", ims_permanence);
             println!("Immediate succesor surprise: {:?}", ims_surprise);
@@ -2184,8 +2184,8 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
             }
 
             let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, false);
-            let permanence = calculate_permanence(&g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
-            let surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&finalized_core_placements)));
+            let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+            let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
             println!("Multi-level solver info: {:?}", execution_info);
             println!("Multi-level solver permanence: {:?}", permanence);
             println!("Multi-level solver surprise: {:?}", surprise);
@@ -2196,27 +2196,61 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
                 best_surprise_per_algo.insert("Multi-level differential evolution", execution_info.speedup);
             }
 
+            let tree_g = tree_transform(&original_g);
+            let (tree_pid_array, tree_partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &tree_g, None);
+
+            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&tree_pid_array), num_generations, false);
+            let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+            let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
+            println!("Multi-level tree solver info: {:?}", execution_info);
+            println!("Multi-level tree solver permanence: {:?}", permanence);
+            println!("Multi-level tree solver surprise: {:?}", surprise);
+
+            let algo_best = *best_surprise_per_algo.entry("Multi-level tree differential evolution").or_insert(f64::MIN);
+            if execution_info.speedup > algo_best {
+                visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_tree_{}", execution_info.speedup)));
+                best_surprise_per_algo.insert("Multi-level tree differential evolution", execution_info.speedup);
+            }
+
             for (num_gen, pid_array) in partial_solutions {
                 let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &g, Some(&pid_array));
 
                 for _ in 0..NUM_SIMULATOR_EVALUATIONS {
                     let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
-                    let ims_permanence = calculate_permanence(&g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
-                    let ims_surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+                    let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+                    let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
 
                     _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
 
                     let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, false);
-                    let permanence = calculate_permanence(&g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
-                    let surprise = calculate_surprise(&g, Some(&unwrap_pid_array(&finalized_core_placements)));
+                    let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+                    let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
 
                     _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
+                }
+            }
+
+            for (num_gen, pid_array) in tree_partial_solutions {
+                let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &tree_g, Some(&pid_array));
+
+                for _ in 0..NUM_SIMULATOR_EVALUATIONS {
+                    let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
+                    let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+                    let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+
+                    _f.write(format!("Differential Evolution Tree,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
+
+                    let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, false);
+                    let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+                    let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
+
+                    _f.write(format!("Differential Evolution Tree,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
                 }
             }
         }
     }
 
-    visualize_graph(&g, None, Some("ground_truth_flattened".to_string()));
+    visualize_graph(&tree_transform(&original_g), None, Some("ground_truth_flattened".to_string()));
     visualize_graph(&original_g, None, Some("ground_truth_original".to_string()));
     gen_speedup_bars(TEMP_FILE_NAME, "speedups");
 }
@@ -2325,5 +2359,5 @@ fn main() {
     
     //test_metaheuristics_03(10);
     //test_tree_transform();
-    test_multi_level_clustering(true);
+    test_multi_level_clustering(false);
 }
