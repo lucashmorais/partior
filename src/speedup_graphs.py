@@ -5,6 +5,7 @@ import numpy as np
 import sys
 import pprint
 import csv
+import pdb
 
 if len(sys.argv) <= 2:
     print('Usage: metrics_as_function_of_iterations.py path_to_input_csv path_to_output')
@@ -70,16 +71,15 @@ with open(input_path, "r") as f:
 
     #return filter(lambda x: x[12] in ("00GG", "05FT", "66DM")), list(reader))
 
-x = []
-y1 = []
-y2 = []
-y3 = []
+x = [[], [], []]
+y1 = [[], [], []]
+y2 = [[], [], []]
+y3 = [[], [], []]
 
 for (i, alg) in enumerate(alg_dict.keys()):
-    x.append([])
-    y1.append([])
-    y2.append([])
-    y3.append([])
+    if (i == 0):
+        continue
+
     print(f"{i}, {alg}")
     for num_cores in alg_dict[alg]:
         for min_parallelism in alg_dict[alg][num_cores]:
@@ -112,15 +112,17 @@ def line_graph(x, y1, y2, suffix):
 
     colors = ["#219ebc","#ffc533","#126782","#fda01a"]
 
-    for i in range(len(x)):
+    for i in range(1, len(x)):
         alg = ""
-        if i == 0:
+        if i == 1:
             alg = "Original"
-        else:
+        elif i == 2:
             alg = "Tree"
 
-        ax.plot(x[i], y1[i], color = colors[i * 2], label=alg)
-        ax2.plot(x[i], y2[i], color = colors[i * 2 + 1], label=alg)
+        #pdb.set_trace()
+
+        ax.plot(x[i], y1[i], color = colors[(i - 1) * 2], label=alg)
+        ax2.plot(x[i], y2[i], color = colors[(i - 1) * 2 + 1], label=alg)
         #ax2.plot(x[i], y3[i], color ='yellow')
 
     ax.legend(loc = 'center left', bbox_to_anchor=(0.0, 0.57))

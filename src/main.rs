@@ -25,10 +25,11 @@ use metaheuristics_nature::tests::TestObj;
 
 use once_cell::sync::Lazy;
 
-const MAX_NUMBER_OF_PARTITIONS: usize = 32;
+const MAX_NUMBER_OF_PARTITIONS: usize = 8;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
 const MAX_NUMBER_OF_NODES: usize = 128;
-const MAX_BINOMIAL_A: usize = 550000;
+//const MAX_BINOMIAL_A: usize = 550000;
+const MAX_BINOMIAL_A: usize = 8000;
 const MAX_BINOMIAL_B: usize = 1024;
 /*
 const MAX_BINOMIAL_A: usize = 0;
@@ -36,7 +37,9 @@ const MAX_BINOMIAL_B: usize = 0;
 */
 
 static BIN_MATRIX: Lazy<Vec<Vec<f64>>> = Lazy::new(|| {
-    new_binomial_matrix(MAX_BINOMIAL_A, MAX_BINOMIAL_B)
+    let m = new_binomial_matrix(MAX_BINOMIAL_A, MAX_BINOMIAL_B);
+    println!("Finished initializing binomial matrix.");
+    return m;
 });
 
 /*
@@ -236,9 +239,9 @@ fn new_binomial_matrix(max_a: usize, max_b: usize) -> Vec<Vec<f64>> {
 
     for i in 0..=max_a {
         for j in 0..=max_b {
-            if j <= i {
-                let mut partial = 0.0;
+            let mut partial = 0.0;
 
+            if j <= i {
                 if i > (MAX_BINOMIAL_B) && i <= (MAX_BINOMIAL_A) && j <= (MAX_BINOMIAL_B) {
                     partial = v[i - 1][j];
                     partial += (i as f64).log2();
@@ -249,11 +252,11 @@ fn new_binomial_matrix(max_a: usize, max_b: usize) -> Vec<Vec<f64>> {
                         partial -= ((1 + k) as f64).log2();
                     }
                 }
-
-                //println!("[new_binomial]: (i, j): ({}, {}) = {}", i, j, partial);
-
-                v[i].push(partial);
             }
+
+            //println!("[new_binomial]: (i, j): ({}, {}) = {}", i, j, partial);
+
+            v[i].push(partial);
         }
     }
 
@@ -265,6 +268,7 @@ fn new_binomial(a_raw: u64, b_raw: u64, force_compute: bool) -> f64 {
     // b_raw: small
     
     if !force_compute && a_raw <= (MAX_BINOMIAL_A as u64) && b_raw <= (MAX_BINOMIAL_B as u64) {
+        //println!("[new_binomial]: (a_raw, b_raw) = ({}, {})", a_raw, b_raw);
         return BIN_MATRIX[a_raw as usize][b_raw as usize];
     } else {
         let mut partial = 0.0;
@@ -2113,7 +2117,7 @@ fn split_solve_merge(population_size: usize, num_generations: usize, target_num_
 
         for i in 0..graph_vec.len() {
             let g_ref = &graph_vec[i];
-            let (partial_pid_array, _) = split_solve_merge(population_size, (num_generations as f64 / 1.412) as usize, target_num_partitions / 2, g_ref, None);
+            let (partial_pid_array, _) = split_solve_merge(population_size, (num_generations as f64 / 1.000) as usize, target_num_partitions / 2, g_ref, None);
 
             /*
             if target_num_partitions == MAX_NUMBER_OF_PARTITIONS {
@@ -2147,23 +2151,25 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
 }
 
 fn test_multi_level_clustering(use_flattened_graph: bool) {
-    let num_nodes = 64;
-    let num_edges = 64;
+    let num_nodes = 128;
+    let num_edges = 384;
     //let mixing_coeff = 0.003;
     let mixing_coeff = 0.003;
+    let num_gen_communities = 8;
     let num_communities = 8;
     let max_comm_size_difference = 0;
+    let num_flattening_passes = 2;
 
-    let original_g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    let original_g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
     let g = if use_flattened_graph {
-        tree_transform(&original_g)
+        multi_pass_tree_transform(&original_g, 2, false)
     } else {
         original_g.clone()
     };
     println!("Finished generating random graph.");
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
-    const NUM_SOLVER_EVALUATIONS: usize = 10;
+    const NUM_SOLVER_EVALUATIONS: usize = 50;
     const NUM_SIMULATOR_EVALUATIONS: usize = 10;
 
     let mut best_surprise_per_algo = HashMap::new();
@@ -2171,12 +2177,12 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
     const POP_SIZE: usize = 64;
 
-    let num_gen_options = [2000];
+    let num_gen_options = [6000];
     for num_generations in num_gen_options {
-        for _ in 0..NUM_SOLVER_EVALUATIONS {
+        for solver_iter in 0..NUM_SOLVER_EVALUATIONS {
+            println!("\n\nSolver iteration: {}", solver_iter);
             //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
             let start = Instant::now();
-
             let (pid_array, partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
             println!("Full multi-level solver elapsed time: {:?}", start.elapsed());
 
@@ -2186,6 +2192,16 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
             println!("Immediate succesor info: {:?}", immediate_successor_execution_info);
             println!("Immediate succesor permanence: {:?}", ims_permanence);
             println!("Immediate succesor surprise: {:?}", ims_surprise);
+
+            for _ in 0..NUM_SIMULATOR_EVALUATIONS {
+                let num_gen = 0;
+
+                let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
+                let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+                let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+
+                _f.write(format!("Immediate successor,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
+            }
 
             let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
             if immediate_successor_execution_info.speedup > algo_best {
@@ -2206,8 +2222,13 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
                 best_surprise_per_algo.insert("Multi-level differential evolution", execution_info.speedup);
             }
 
-            let tree_g = tree_transform(&original_g);
+            let start = Instant::now();
+            let tree_g = multi_pass_tree_transform(&original_g, num_flattening_passes, false);
+            println!("Time for applying tree transformation {} times: {:?}", num_flattening_passes, start.elapsed());
+
+            let start = Instant::now();
             let (tree_pid_array, tree_partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &tree_g, None);
+            println!("Full multi-level tree solver elapsed time: {:?}", start.elapsed());
 
             let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&tree_pid_array), num_generations, false);
             let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
@@ -2226,12 +2247,6 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
                 let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &g, Some(&pid_array));
 
                 for _ in 0..NUM_SIMULATOR_EVALUATIONS {
-                    let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
-                    let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
-                    let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
-
-                    _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
-
                     let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, false);
                     let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
                     let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
@@ -2244,12 +2259,6 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
                 let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &tree_g, Some(&pid_array));
 
                 for _ in 0..NUM_SIMULATOR_EVALUATIONS {
-                    let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
-                    let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
-                    let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
-
-                    _f.write(format!("Differential Evolution Tree,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
-
                     let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, false);
                     let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
                     let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
@@ -2260,7 +2269,7 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
         }
     }
 
-    visualize_graph(&tree_transform(&original_g), None, Some("ground_truth_flattened".to_string()));
+    visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some("ground_truth_flattened".to_string()));
     visualize_graph(&original_g, None, Some("ground_truth_original".to_string()));
     gen_speedup_bars(TEMP_FILE_NAME, "speedups");
 }
@@ -2289,7 +2298,7 @@ fn linspace_vec(min_val: usize, max_val: usize, num_elements: usize) -> Vec<usiz
     v
 }
 
-fn tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>) -> Graph<NodeInfo, usize, Directed, usize> {
+fn tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>, adapt_weights: bool) -> Graph<NodeInfo, usize, Directed, usize> {
     let mut g = original_graph.clone();
     let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
 
@@ -2344,75 +2353,102 @@ fn tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>) -> G
         }
     }
 
-    let mut moved_weights = vec![0; MAX_NUMBER_OF_NODES];
-    for e in original_graph.edge_references() {
-        /*
-        println!("{:?}", e);
-        println!("{:?}", e.source());
-        println!("{:?}", e.target());
-        println!("Found in flattened graph? {:?}", g.contains_edge(e.source(), e.target()));
-        println!();
-        */
+    if adapt_weights {
+        let mut moved_weights = vec![0; MAX_NUMBER_OF_NODES];
+        for e in original_graph.edge_references() {
+            /*
+            println!("{:?}", e);
+            println!("{:?}", e.source());
+            println!("{:?}", e.target());
+            println!("Found in flattened graph? {:?}", g.contains_edge(e.source(), e.target()));
+            println!();
+            */
 
-        let s = e.source();
-        let t = e.target();
+            let s = e.source();
+            let t = e.target();
 
-        if !g.contains_edge(s, t) {
-            let s_id = original_graph.node_weight(s).unwrap().numerical_id;
+            if !g.contains_edge(s, t) {
+                let s_id = original_graph.node_weight(s).unwrap().numerical_id;
+                let edge_ref = original_graph.find_edge(s, t).unwrap();
+                let e_weight = original_graph.edge_weight(edge_ref).unwrap();
 
-            moved_weights[s_id] += 1;
-        }
-    }
-
-    // TODO: PERFORMANCE
-    //       Avoid the extra pass for handling weighted
-    //       nodes with no outgoing edges.
-
-    for v in g.node_references() {
-        let v_id = g.node_weight(v.0).unwrap().numerical_id;
-        if moved_weights[v_id] > 0 && g.neighbors_directed(v.0, petgraph::Outgoing).count() == 0 {
-            // TODO: PERFORMANCE
-            // TODO: Prove that we are always able to escape from this loop
-            'outer: loop {
-                for a in g.neighbors_directed(v.0, petgraph::Incoming) {
-                    if moved_weights[v_id] > 0 {
-                        let a_id = g.node_weight(a.id()).unwrap().numerical_id;
-                        moved_weights[a_id] += 1;
-                        moved_weights[v_id] -= 1;
-                    } else {
-                        break 'outer;
-                    }
-                }
-
+                moved_weights[s_id] += 1;
+                //moved_weights[s_id] += *e_weight;
             }
         }
+
+        // TODO: PERFORMANCE
+        //       Avoid the extra pass for handling weighted
+        //       nodes with no outgoing edges.
+
+        for v in g.node_references() {
+            let v_id = g.node_weight(v.0).unwrap().numerical_id;
+            if moved_weights[v_id] > 0 && g.neighbors_directed(v.0, petgraph::Outgoing).count() == 0 {
+                // TODO: PERFORMANCE
+                // TODO: Prove that we are always able to escape from this loop
+                'outer: loop {
+                    for a in g.neighbors_directed(v.0, petgraph::Incoming) {
+                        if moved_weights[v_id] > 0 {
+                            let a_id = g.node_weight(a.id()).unwrap().numerical_id;
+                            moved_weights[a_id] += 1;
+                            moved_weights[v_id] -= 1;
+                        } else {
+                            break 'outer;
+                        }
+                    }
+
+                }
+            }
+        }
+
+        //println!("{:?}", moved_weights);
+        let mut weighted_g = g.clone();
+
+        for v in g.node_references() {
+            let v_id = g.node_weight(v.0).unwrap().numerical_id;
+            if moved_weights[v_id] > 0 {
+                'outer: loop {
+                    for a in g.neighbors_directed(v.0, petgraph::Outgoing) {
+                        if moved_weights[v_id] > 0 {
+                            let edge = weighted_g.edges_connecting(v.0, a.id()).last().unwrap();
+                            let edge_weight = weighted_g.edge_weight_mut(edge.id()).unwrap();
+                            *edge_weight = *edge_weight + 1;
+                            moved_weights[v_id] -= 1;
+                        } else {
+                            break 'outer;
+                        }
+                    }
+
+                }
+            }
+        }
+
+        //println!("{:?}", moved_weights);
+        return weighted_g;
     }
 
-    //println!("{:?}", moved_weights);
-    let mut weighted_g = g.clone();
+    g
+}
 
-    for v in g.node_references() {
-        let v_id = g.node_weight(v.0).unwrap().numerical_id;
-        if moved_weights[v_id] > 0 {
-            'outer: loop {
-                for a in g.neighbors_directed(v.0, petgraph::Outgoing) {
-                    if moved_weights[v_id] > 0 {
-                        let edge = weighted_g.edges_connecting(v.0, a.id()).last().unwrap();
-                        let edge_weight = weighted_g.edge_weight_mut(edge.id()).unwrap();
-                        *edge_weight = *edge_weight + 1;
-                        moved_weights[v_id] -= 1;
-                    } else {
-                        break 'outer;
-                    }
-                }
+fn multi_pass_tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>, mut num_passes: usize, adapt_weights: bool) -> Graph<NodeInfo, usize, Directed, usize> {
+    let mut next_pass: Graph<NodeInfo, usize, Directed, usize> = tree_transform(&original_graph, adapt_weights);
 
-            }
+    for _ in 1..num_passes {
+        let last_pass = next_pass.clone();
+
+        next_pass = original_graph.clone();
+        for e in last_pass.edge_references() {
+            let e_ref = next_pass.find_edge(e.source(), e.target()).unwrap();
+            next_pass.remove_edge(e_ref);
+        }
+
+        next_pass = tree_transform(&next_pass, adapt_weights);
+        for e in last_pass.edge_references() {
+            next_pass.add_edge(e.source(), e.target(), *e.weight());
         }
     }
 
-    //println!("{:?}", moved_weights);
-
-    weighted_g
+    next_pass
 }
 
 fn test_tree_transform() {
@@ -2424,9 +2460,35 @@ fn test_tree_transform() {
 
     let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
     visualize_graph(&g, None, Some("original_graph".to_string()));
+    //println!("{:?}", &g);
 
-    let g_tree = tree_transform(&g);
+    let g_tree = tree_transform(&g, false);
     visualize_graph(&g_tree, None, Some("tree_transformed_graph".to_string()));
+    //println!("{:?}", &g_tree);
+}
+
+fn test_n_tree_transform() {
+    let num_nodes = 64;
+    let num_edges = 192;
+    let mixing_coeff = 0.001;
+    let num_communities = 8;
+    let max_comm_size_difference = 0;
+
+    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    visualize_graph(&g, None, Some("original_graph".to_string()));
+    println!("{:?}", &g);
+
+    let g_tree = multi_pass_tree_transform(&g, 1, false);
+    visualize_graph(&g_tree, None, Some("tree_transformed_graph_1_pass".to_string()));
+    println!("{:?}", &g_tree);
+
+    let g_tree = multi_pass_tree_transform(&g, 2, false);
+    visualize_graph(&g_tree, None, Some("tree_transformed_graph_2_passes".to_string()));
+    println!("{:?}", &g_tree);
+
+    let g_tree = multi_pass_tree_transform(&g, 3, false);
+    visualize_graph(&g_tree, None, Some("tree_transformed_graph_3_passes".to_string()));
+    println!("{:?}", &g_tree);
 }
 
 fn main() {
@@ -2437,5 +2499,6 @@ fn main() {
     
     //test_metaheuristics_03(10);
     //test_tree_transform();
+    //test_n_tree_transform();
     test_multi_level_clustering(false);
 }
