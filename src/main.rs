@@ -413,7 +413,9 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Op
     let top = min(num_links, num_max_internal_links);
 
     let j = (num_internal_links + top) / 2;
-    surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false);
+    surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false) - (num_internal_links as f64) * 0.001;
+    //surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false) - (num_internal_links as f64) * 0.01;
+    //surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false);
 
     //surprise -= new_binomial(num_max_links, num_links);
 
@@ -2143,6 +2145,54 @@ fn split_solve_merge(population_size: usize, num_generations: usize, target_num_
     }
 }
 
+fn local_search_surprise(graph: &Graph<NodeInfo, usize, Directed, usize>) -> Vec<usize> {
+    let mut pid_array = vec![0; MAX_NUMBER_OF_NODES];
+    let mut best_surprise_so_far = f64::MAX;
+    let mut exhaustive_tries_since_improvement = 0;
+
+    /*
+    let mut rng = rand::thread_rng();
+    for i in 0..MAX_NUMBER_OF_NODES {
+        pid_array[i] = rng.gen_range(0..MAX_NUMBER_OF_PARTITIONS);
+    }
+    */
+
+    'outer: loop {
+        for i in 0..MAX_NUMBER_OF_NODES {
+            let mut improved = false;
+            let original_pid = pid_array[i];
+            let mut best_pid = original_pid;
+
+            for offset in 0..MAX_NUMBER_OF_PARTITIONS {
+                let pid = (original_pid + offset) % MAX_NUMBER_OF_PARTITIONS;
+                pid_array[i] = pid;
+
+                let current_surprise = calculate_surprise(&graph, Some(&pid_array));
+
+                if current_surprise < best_surprise_so_far {
+                    improved = true;
+                    best_surprise_so_far = current_surprise;
+                    best_pid = pid;
+                    println!("{}", current_surprise);
+                }
+            }
+
+            if !improved {
+                exhaustive_tries_since_improvement += 1;
+            } else {
+                exhaustive_tries_since_improvement = 0;
+                pid_array[i] = best_pid;
+            }
+
+            if exhaustive_tries_since_improvement >= MAX_NUMBER_OF_NODES {
+                break 'outer;
+            }
+        }
+    }
+
+    pid_array
+}
+
 fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
     let mut unwrapped_pid_array: Vec<usize> = vec![];
     pid_array.into_iter().for_each(|x| unwrapped_pid_array.push(x.unwrap()));
@@ -2154,7 +2204,7 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
     let num_nodes = 128;
     let num_edges = 384;
     //let mixing_coeff = 0.003;
-    let mixing_coeff = 0.003;
+    let mixing_coeff = 0.000;
     let num_gen_communities = 8;
     let num_communities = 8;
     let max_comm_size_difference = 0;
@@ -2430,7 +2480,7 @@ fn tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>, adap
     g
 }
 
-fn multi_pass_tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>, mut num_passes: usize, adapt_weights: bool) -> Graph<NodeInfo, usize, Directed, usize> {
+fn multi_pass_tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>, num_passes: usize, adapt_weights: bool) -> Graph<NodeInfo, usize, Directed, usize> {
     let mut next_pass: Graph<NodeInfo, usize, Directed, usize> = tree_transform(&original_graph, adapt_weights);
 
     for _ in 1..num_passes {
@@ -2491,6 +2541,26 @@ fn test_n_tree_transform() {
     println!("{:?}", &g_tree);
 }
 
+fn test_local_surprise_search() {
+    let num_nodes = 64;
+    let num_edges = 192;
+    let mixing_coeff = 0.000;
+    let num_communities = 8;
+    let max_comm_size_difference = 0;
+
+    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    //println!("{:?}", &g);
+
+    //let g_tree = multi_pass_tree_transform(&g, 1, false);
+    //println!("{:?}", &g_tree);
+
+    let start = Instant::now();
+    let pid_array_0 = local_search_surprise(&g);
+    println!("Time for completing local search: {:?}", start.elapsed());
+    visualize_graph(&g, Some(&array_to_vec(&pid_array_0)), Some(format!("local_search_0")));
+    //visualize_graph(g_ref, Some(&array_to_vec(&sub_s.result())), Some(format!("sub_graph_{}", i)));
+}
+
 fn main() {
     //gen_sample_graph_image();
     //test_histogram_01();
@@ -2501,4 +2571,5 @@ fn main() {
     //test_tree_transform();
     //test_n_tree_transform();
     test_multi_level_clustering(false);
+    //test_local_surprise_search();
 }
