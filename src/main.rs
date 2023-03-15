@@ -25,6 +25,8 @@ use metaheuristics_nature::tests::TestObj;
 
 use once_cell::sync::Lazy;
 
+mod dinic_maxflow;
+
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
 const MAX_NUMBER_OF_NODES: usize = 128;
@@ -2557,8 +2559,83 @@ fn test_local_surprise_search() {
     let start = Instant::now();
     let pid_array_0 = local_search_surprise(&g);
     println!("Time for completing local search: {:?}", start.elapsed());
-    visualize_graph(&g, Some(&array_to_vec(&pid_array_0)), Some(format!("local_search_0")));
+    visualize_graph(&g, Some(&array_to_vec(&pid_array_0)), Some(format!("local_search_surprise_0")));
     //visualize_graph(g_ref, Some(&array_to_vec(&sub_s.result())), Some(format!("sub_graph_{}", i)));
+}
+
+fn test_local_permanence_search() {
+    let num_nodes = 64;
+    let num_edges = 64;
+    let mixing_coeff = 0.000;
+    let num_communities = 8;
+    let max_comm_size_difference = 0;
+
+    let g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_communities, max_comm_size_difference);
+    //println!("{:?}", &g);
+
+    //let g_tree = multi_pass_tree_transform(&g, 1, false);
+    //println!("{:?}", &g_tree);
+
+    let start = Instant::now();
+    let pid_array_0 = local_search_permanence(&g);
+    println!("Time for completing local search: {:?}", start.elapsed());
+    visualize_graph(&g, Some(&array_to_vec(&pid_array_0)), Some(format!("local_search_permanence_0")));
+    //visualize_graph(g_ref, Some(&array_to_vec(&sub_s.result())), Some(format!("sub_graph_{}", i)));
+}
+
+fn test_dinitz_max_flow() {
+    use dinic_maxflow::*;
+    let mut rng = rand::thread_rng();
+
+    const NUM_NODES: usize = 64;
+    //const NUM_EDGES: usize = 8 * NUM_NODES;
+    const NUM_EDGES: usize = 2 * NUM_NODES - 2;
+    const SOURCE: usize = 0;
+    const SINK: usize = NUM_NODES;
+    //const MAX_WEIGHT: usize = NUM_NODES;
+    const MAX_WEIGHT: usize = 5;
+    const NUM_SOLVER_EVALUATIONS: usize = NUM_NODES;
+    const ALPHA: usize = 1;
+
+    let mut s_vec: Vec<usize> = vec![];
+    let mut t_vec: Vec<usize> = vec![];
+    let mut w_vec: Vec<i32> = vec![];
+
+    for _ in 0..NUM_EDGES {
+        let s = rng.gen_range(SOURCE..=SINK - 1);
+        let t = rng.gen_range(SOURCE..=SINK - 1);
+        let w = rng.gen_range(1..=MAX_WEIGHT);
+
+        s_vec.push(s);
+        t_vec.push(t);
+        w_vec.push(w as i32);
+    }
+
+    let mut total_compute_time = Duration::ZERO;
+
+    for _ in 0..NUM_SOLVER_EVALUATIONS {
+        let start = Instant::now();
+        let mut flow: DinicMaxFlow<i32> = DinicMaxFlow::new(SOURCE, SINK, NUM_NODES + 1);
+
+        for i in 0..NUM_EDGES {
+            flow.add_edge(s_vec[i], t_vec[i], w_vec[i]);
+        }
+
+        for i in 0..NUM_NODES {
+            flow.add_edge(i, SINK, ALPHA as i32);
+        }
+        println!("Time for building graph: {:?}", start.elapsed());
+
+        let start = Instant::now();
+        let max_flow = flow.find_maxflow(i32::MAX);
+
+        let compute_time = start.elapsed();
+        total_compute_time += compute_time;
+        println!("Time for calculating max flow: {:?}", compute_time);
+
+        println!("Max flow: {}", max_flow);
+    }
+    println!("Total time for computing max-flow {NUM_SOLVER_EVALUATIONS} times: {:?}", total_compute_time);
 }
 
 fn main() {
@@ -2570,6 +2647,8 @@ fn main() {
     //test_metaheuristics_03(10);
     //test_tree_transform();
     //test_n_tree_transform();
-    test_multi_level_clustering(false);
+    //test_multi_level_clustering(false);
     //test_local_surprise_search();
+    //test_local_permanence_search();
+    test_dinitz_max_flow();
 }
