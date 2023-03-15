@@ -29,9 +29,9 @@ mod dinic_maxflow;
 
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
-const MAX_NUMBER_OF_NODES: usize = 128;
+const MAX_NUMBER_OF_NODES: usize = 64;
 //const MAX_BINOMIAL_A: usize = 550000;
-const MAX_BINOMIAL_A: usize = 8000;
+const MAX_BINOMIAL_A: usize = 33000;
 const MAX_BINOMIAL_B: usize = 1024;
 /*
 const MAX_BINOMIAL_A: usize = 0;
@@ -456,6 +456,7 @@ fn node_permanence(nid: Option<usize>, v: Option<NodeIndex<usize>>, original_gra
     let mut v_degree = 0;
     let mut internal_pull = 0;
     for n in original_graph.neighbors(v) {
+    //for n in original_graph.neighbors_undirected(v) {
         v_degree += 1;
 
         let n_nid = original_graph.node_weight(n).unwrap().numerical_id;
@@ -494,6 +495,7 @@ fn node_permanence(nid: Option<usize>, v: Option<NodeIndex<usize>>, original_gra
             num_nodes_in_v_cluster += 1;
 
             for nk in original_graph.neighbors_directed(k.id(), petgraph::Incoming) {
+            //for nk in original_graph.neighbors_undirected(k.id()) {
                 let nk_nid = original_graph.node_weight(nk).unwrap().numerical_id;
                 let nk_pid = finalized_core_placements[nk_nid].unwrap_or(pid_array[nk_nid]);
 
@@ -1552,15 +1554,22 @@ fn de_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations:
             .task(|ctx| ctx.gen == num_generations as u64)
             .pop_num(population_size)
             //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
-            /*
             .pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(i, j)| {
-                if i < 2 {
-                    return rng.range(ctx.func.bound_range(j))
+                if i > 1 {
+                    return rng.range(ctx.func.bound_range(j));
                 } else {
-                    return 0.
+                    return 0.;
                 }
+                /*
+                } else {
+                    if i == 0 {
+                        return 0.;
+                    } else {
+                        return 0.;
+                    }
+                }
+                */
             }))
-            */
             .callback(|ctx| {
                 if config.probe_step_vec.is_none() {
                     if ctx.gen % config.probe_step_size as u64 == 0 {
@@ -1595,15 +1604,22 @@ fn de_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_generations:
             .task(|ctx| ctx.gen == num_generations as u64)
             .pop_num(population_size)
             //.pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(_, s)| rng.range(ctx.func.bound_range(s))))
-            /*
             .pool(|ctx, rng| Array2::from_shape_fn(ctx.pool_size(), |(i, j)| {
-                if i < 2 {
-                    return rng.range(ctx.func.bound_range(j))
+                if i > 1 {
+                    return rng.range(ctx.func.bound_range(j));
                 } else {
-                    return 0.
+                    return 0.;
                 }
+                /*
+                } else {
+                    if i == 0 {
+                        return 0.;
+                    } else {
+                        return 0.;
+                    }
+                }
+                */
             }))
-            */
             .callback(|ctx| {
                 if config.probe_step_vec.is_none() {
                     if ctx.gen % config.probe_step_size as u64 == 0 {
@@ -2195,6 +2211,54 @@ fn local_search_surprise(graph: &Graph<NodeInfo, usize, Directed, usize>) -> Vec
     pid_array
 }
 
+fn local_search_permanence(graph: &Graph<NodeInfo, usize, Directed, usize>) -> Vec<usize> {
+    let mut pid_array = vec![0; MAX_NUMBER_OF_NODES];
+    let mut best_permanence_so_far = f64::MIN;
+    let mut exhaustive_tries_since_improvement = 0;
+
+    let mut rng = rand::thread_rng();
+    for i in 0..MAX_NUMBER_OF_NODES {
+        pid_array[i] = rng.gen_range(0..MAX_NUMBER_OF_PARTITIONS);
+    }
+
+    'outer: loop {
+        println!("Starting main loop");
+        for i in 0..MAX_NUMBER_OF_NODES {
+            println!("[exhaustive_tries_since_improvement]: {}", exhaustive_tries_since_improvement);
+            let mut improved = false;
+            let original_pid = pid_array[i];
+            let mut best_pid = original_pid;
+
+            for offset in 0..MAX_NUMBER_OF_PARTITIONS {
+                let pid = (original_pid + offset) % MAX_NUMBER_OF_PARTITIONS;
+                pid_array[i] = pid;
+
+                let current_permanence = calculate_permanence(&graph, &array_to_vec(&pid_array), &unwrap_pid_array(&array_to_vec(&pid_array)));
+
+                if current_permanence > best_permanence_so_far {
+                    improved = true;
+                    best_permanence_so_far = current_permanence;
+                    best_pid = pid;
+                    println!("{}", current_permanence);
+                }
+            }
+
+            if !improved {
+                exhaustive_tries_since_improvement += 1;
+            } else {
+                exhaustive_tries_since_improvement = 0;
+                pid_array[i] = best_pid;
+            }
+
+            if exhaustive_tries_since_improvement >= MAX_NUMBER_OF_NODES {
+                break 'outer;
+            }
+        }
+    }
+
+    pid_array
+}
+
 fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
     let mut unwrapped_pid_array: Vec<usize> = vec![];
     pid_array.into_iter().for_each(|x| unwrapped_pid_array.push(x.unwrap()));
@@ -2203,8 +2267,8 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
 }
 
 fn test_multi_level_clustering(use_flattened_graph: bool) {
-    let num_nodes = 128;
-    let num_edges = 384;
+    let num_nodes = 64;
+    let num_edges = 192;
     //let mixing_coeff = 0.003;
     let mixing_coeff = 0.000;
     let num_gen_communities = 8;
@@ -2221,15 +2285,15 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
     println!("Finished generating random graph.");
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
-    const NUM_SOLVER_EVALUATIONS: usize = 50;
+    const NUM_SOLVER_EVALUATIONS: usize = 10;
     const NUM_SIMULATOR_EVALUATIONS: usize = 10;
 
     let mut best_surprise_per_algo = HashMap::new();
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
-    const POP_SIZE: usize = 64;
+    const POP_SIZE: usize = 32;
 
-    let num_gen_options = [6000];
+    let num_gen_options = [12000];
     for num_generations in num_gen_options {
         for solver_iter in 0..NUM_SOLVER_EVALUATIONS {
             println!("\n\nSolver iteration: {}", solver_iter);
