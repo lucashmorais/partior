@@ -2714,17 +2714,47 @@ fn text_export_graph(graph: &Graph<NodeInfo, usize, Directed, usize>) {
     }
 }
 
+fn generate_max_flow_clustering_graph(graph: &Graph<NodeInfo, usize, Directed, usize>, alpha: usize, weight_override: Option<usize>) -> Graph<NodeInfo, usize, Directed, usize> {
+    let mut instance = graph.clone();
+    let original_node_count = graph.node_count();
+
+    let sink = instance.add_node(NodeInfo{numerical_id: original_node_count, partition_id: 0});
+    
+    let mut num_added_edges = 0;
+    let node_refs: Vec<NodeIndex<usize>> = instance.node_references().map(|(a, _)| a).collect();
+
+    if weight_override.is_some() {
+        let w = weight_override.unwrap();
+
+        for e in instance.edge_weights_mut() {
+            *e = w;
+        }
+    }
+
+    for n in node_refs {
+        if num_added_edges >= original_node_count {
+            break;
+        }
+
+        instance.add_edge(sink, n.id(), alpha);
+        num_added_edges += 1;
+    }
+
+    instance
+}
+
 fn export_clustering_problem() {
-    let num_nodes = 6;
-    let num_edges = 12;
+    let num_nodes = 256;
+    let num_edges = num_nodes * 2 - 2;
     //let mixing_coeff = 0.003;
     let mixing_coeff = 0.000;
-    let num_gen_communities = 1;
+    let num_gen_communities = 8;
     let max_comm_size_difference = 0;
 
     let graph = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
 
-    text_export_graph(&graph);
+    text_export_graph(&generate_max_flow_clustering_graph(&graph, 1, Some(5)));
+    //text_export_graph(&graph, Some(5));
 }
 
 fn main() {
