@@ -2702,6 +2702,31 @@ fn test_dinitz_max_flow() {
     println!("Total time for computing max-flow {NUM_SOLVER_EVALUATIONS} times: {:?}", total_compute_time);
 }
 
+fn text_export_graph(graph: &Graph<NodeInfo, usize, Directed, usize>) {
+    println!("{} {}", graph.node_count(), graph.edge_count());
+
+    for e in graph.edge_references() {
+        let s = e.source().index();
+        let t = e.target().index();
+        let w = e.weight().index();
+
+        println!("{:?} {:?} {:?}", s, t, w);
+    }
+}
+
+fn export_clustering_problem() {
+    let num_nodes = 6;
+    let num_edges = 12;
+    //let mixing_coeff = 0.003;
+    let mixing_coeff = 0.000;
+    let num_gen_communities = 1;
+    let max_comm_size_difference = 0;
+
+    let graph = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
+
+    text_export_graph(&graph);
+}
+
 fn main() {
     //gen_sample_graph_image();
     //test_histogram_01();
@@ -2714,5 +2739,6 @@ fn main() {
     //test_multi_level_clustering(false);
     //test_local_surprise_search();
     //test_local_permanence_search();
-    test_dinitz_max_flow();
+    //test_dinitz_max_flow();
+    export_clustering_problem();
 }
