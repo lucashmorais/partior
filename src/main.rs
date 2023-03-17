@@ -2,6 +2,7 @@ use petgraph::graph::*;
 use petgraph::{Directed, Undirected};
 use petgraph::EdgeType;
 use petgraph::graphmap::GraphMap;
+use petgraph::graphmap::*;
 use petgraph::visit::{IntoNodeReferences, IntoEdgeReferences};
 use petgraph::visit::NodeRef;
 use petgraph::algo::{dijkstra, min_spanning_tree};
@@ -16,7 +17,7 @@ use rand::Rng;
 use rand::seq::SliceRandom;
 use std::cmp::min;
 use statrs::function::factorial::binomial;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, BTreeMap};
 use csv::Writer;
 use std::time::{Duration, Instant};
 use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
@@ -2655,10 +2656,9 @@ fn test_local_permanence_search() {
 }
 
 fn test_dinitz_max_flow() {
-    use dinic_maxflow::*;
     let mut rng = rand::thread_rng();
 
-    const NUM_NODES: usize = 64;
+    const NUM_NODES: usize = 256;
     //const NUM_EDGES: usize = 8 * NUM_NODES;
     const NUM_EDGES: usize = 2 * NUM_NODES - 2;
     const SOURCE: usize = 0;
@@ -2709,6 +2709,245 @@ fn test_dinitz_max_flow() {
     println!("Total time for computing max-flow {NUM_SOLVER_EVALUATIONS} times: {:?}", total_compute_time);
 }
 
+fn build_dinitz_instance(graph: &Graph<NodeInfo, usize, Undirected, usize>, source: usize, sink: usize) -> DinicMaxFlow<i64> {
+    let num_nodes = graph.node_count();
+    let mut flow: DinicMaxFlow<i64> = DinicMaxFlow::new(source, sink, num_nodes);
+
+    for e in graph.edge_references() {
+        let a = e.source();
+        let b = e.target();
+        let w = e.weight();
+        let a_id = graph.node_weight(a).unwrap().numerical_id;
+        let b_id = graph.node_weight(b).unwrap().numerical_id;
+        //println!("[build_dinitz_instance]: (a, b, w): ({}, {}, {})", a, b, *w);
+
+        flow.add_edge(a_id, b_id, *w as i64);
+        flow.add_edge(b_id, a_id, *w as i64);
+    }
+
+    flow
+}
+
+fn get_node_sets_from_min_cut(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, flow_edges: &Vec<FlowResultEdge<i64>>) -> Vec<HashSet<i64>> {
+    let mut node_sets: Vec<HashSet<i64>> = vec![];
+
+    let start = Instant::now();
+    //TODO-PERFORMANCE: Avoid cloning the tree here, since this function is called every time
+    //                  max_flow needs to be calculated by `gusfield_gomory_hu_solver`
+    let mut cut_tree = cut_tree.clone();
+    println!("Time for cloning cut tree prior to cutting: {:?}", start.elapsed());
+    println!("[get_node_sets_from_min_cut]: flow_edges: {:?}", flow_edges);
+
+    for e in flow_edges {
+        let s = e.source;
+        let t = e.sink;
+
+        cut_tree.remove_edge(NodeInfo{numerical_id: s, partition_id: 0}, NodeInfo{numerical_id: t, partition_id: 0});
+    }
+
+    //visualize_graph(&cut_tree.clone().into_graph(), None, Some("cut_tree_after_cutting".to_string()));
+
+    //Running the following line costs some 500 ns if there is a single edge to print
+    //println!("[get_node_sets_from_min_cut]: flow_edges: {:?}", flow_edges);
+
+    let node_refs: Vec<(NodeInfo, &NodeInfo)> = cut_tree.node_references().collect();
+    let first_node = node_refs[0].id();
+    let mut parent_vec: Vec<Option<NodeInfo>> = vec![None; MAX_NUMBER_OF_NODES];
+
+    let mut node_queue = vec![first_node];    
+
+    // The version based on the BTreeMap has lower complexity,
+    // but it performs worse than the simpler one for graphs
+    // with 50K nodes or less.
+    let simple_version = true;
+    if simple_version {
+        let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
+        let mut set_id = 0;
+        'outer: loop {
+            node_sets.push(HashSet::new());
+            
+            while !node_queue.is_empty() {
+                let v = node_queue.pop().unwrap();
+                let v_id = v.numerical_id;
+                was_added[v_id] = true;
+                node_sets[set_id].insert(v_id as i64);
+
+                for n in cut_tree.neighbors(v) {
+                    let n_id = n.numerical_id;
+
+                    if !was_added[n_id] {
+                        was_added[n_id] = true;
+                        parent_vec[n_id] = Some(v);
+                        node_queue.push(n);
+                    }
+                }
+            }
+            set_id += 1;
+
+            for v in cut_tree.node_references() {
+                let v_id = v.1.numerical_id;
+
+                if !was_added[v_id] {
+                    node_queue.push(v.id());
+                    continue 'outer;
+                }
+            }
+
+            break;
+        }
+    } else {
+        let mut unprocessed_nodes: BTreeMap<usize, NodeInfo> = BTreeMap::new();
+        for n in cut_tree.node_references() {
+            let n_id = n.id().numerical_id;
+            unprocessed_nodes.insert(n_id, n.id());
+        }
+
+        let mut set_id = 0;
+        loop {
+            node_sets.push(HashSet::new());
+            
+            while !node_queue.is_empty() {
+                let v = node_queue.pop().unwrap();
+                let v_id = v.numerical_id;
+                unprocessed_nodes.remove(&v_id);
+                node_sets[set_id].insert(v_id as i64);
+
+                for n in cut_tree.neighbors(v) {
+                    let n_id = n.numerical_id;
+                    let removal_result = unprocessed_nodes.remove(&n_id);
+
+                    if removal_result.is_some() {
+                        parent_vec[n_id] = Some(v);
+                        node_queue.push(n);
+                    }
+                }
+            }
+            set_id += 1;
+
+            if unprocessed_nodes.is_empty() {
+                break;
+            }
+
+            let new_node = unprocessed_nodes.pop_first().unwrap().1;
+            node_queue.push(new_node);
+        }
+    }
+    //println!("[get_node_sets_from_min_cut]: node_sets: {:?}", node_sets);
+
+    node_sets
+}
+
+fn get_max_flow_and_node_sets(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, flow_instance: &mut DinicMaxFlow<i64>) -> (i64, Vec<HashSet<i64>>) {
+    let max_flow = flow_instance.find_maxflow(i64::MAX);
+    let flow_edges = flow_instance.get_flow_edges(i64::MAX);
+    //let (node_set_x, node_set_y) = get_node_sets_from_min_cut(&cut_tree, &flow_edges);
+    let node_sets = get_node_sets_from_min_cut(&cut_tree, &flow_edges);
+    //assert!(node_sets.len() == 2);
+
+    (max_flow, node_sets)
+}
+
+// Implemented according to Gusfield, Dan. "Very simple methods for all pairs network flow analysis."
+// SIAM Journal on Computing 19.1 (1990): 143-155.
+// https://doi.org/10.1137/0219009
+//
+// This implementation ignores directionality and will output an undirected tree.
+#[allow(dead_code)]
+fn gusfield_gomory_hu_solver(graph: &Graph<NodeInfo, usize, Undirected, usize>) -> Graph<NodeInfo, usize, Undirected, usize> {
+    // TODO-PERFORMANCE: We should find a way to quickly clone DinicMaxFlow objects
+    //                   rather than spend time rebuilding them from external data.
+                       
+    println!("[gusfield_gomory_hu_solver]: Visualizing reference graph");
+    visualize_graph(&graph, None, Some("reference_graph".to_string()));
+
+    let mut cut_tree = GraphMap::<NodeInfo, usize, Undirected>::new();
+    let num_nodes = graph.node_count();
+
+    for i in 0..num_nodes {
+        cut_tree.add_node(NodeInfo{numerical_id: i, partition_id: 0});
+    }
+
+    for t in 1..num_nodes {
+        let s = 0;
+        let w = 1;
+
+        cut_tree.add_edge(NodeInfo{numerical_id: s, partition_id: 0}, NodeInfo{numerical_id: t, partition_id: 0}, w);
+    }
+    //visualize_graph(&cut_tree.clone().into_graph(), None, Some("cut_tree_initial_state".to_string()));
+
+    let mut first = true;
+    for s in 1..num_nodes {
+        let s_info = NodeInfo{numerical_id: s, partition_id: 0};
+
+        println!("\ns: {s}");
+        let start = Instant::now();
+        let t = cut_tree.neighbors(s_info).next().unwrap().numerical_id;
+        let t_info = NodeInfo{numerical_id: t, partition_id: 0};
+        println!("Time for finding t: {:?}", start.elapsed());
+
+        let source = s;
+        let sink = t;
+
+        let start = Instant::now();
+        //let mut flow_instance: DinicMaxFlow<i64> = build_dinitz_instance(&cut_tree, source, sink);
+        let mut flow_instance: DinicMaxFlow<i64> = build_dinitz_instance(&graph, source, sink);
+        println!("Time for building dinitz instance: {:?}", start.elapsed());
+        let start = Instant::now();
+
+        let mut graph_map = GraphMap::<NodeInfo, usize, Undirected>::new();
+        for n in graph.node_indices() {
+            graph_map.add_node(NodeInfo{numerical_id: n.index(), partition_id: 0});
+        }
+
+        for e in graph.edge_references() {
+            let a = e.source();
+            let b = e.target();
+            let w = e.weight();
+            let a_id = graph.node_weight(a).unwrap().numerical_id;
+            let b_id = graph.node_weight(b).unwrap().numerical_id;
+
+            graph_map.add_edge(NodeInfo{numerical_id: a_id, partition_id: 0}, NodeInfo{numerical_id: b_id, partition_id: 0}, *w);
+        }
+
+
+        let (max_flow, node_sets) = get_max_flow_and_node_sets(&graph_map, &mut flow_instance);
+        println!("Time for calculating max flow: {:?}", start.elapsed());
+
+        let edge_to_label = cut_tree.edge_weight_mut(s_info, t_info).unwrap();
+        *edge_to_label = max_flow as usize;
+        println!("max_flow({s}, {t}): {max_flow}");
+
+        //if first && max_flow != 0 {
+        if first {
+            first = false;
+            //println!("{:?}", cut_tree);
+            //visualize_graph(&cut_tree.clone().into_graph(), None, Some("cut_tree_flow_graph".to_string()));
+        }
+        
+        println!("node_sets: {:?}", node_sets);
+
+        for i in 0..num_nodes {
+            if i == s {
+                continue;
+            }
+            
+            let i_info = NodeInfo{numerical_id: i, partition_id: 0};
+            //println!("(s, i, t) = ({s}, {i}, {t})");
+
+            for set_id in 0..node_sets.len() {
+                let set = &node_sets[set_id];
+                if set.contains(&(s as i64)) && set.contains(&(i as i64)) && cut_tree.contains_edge(i_info, t_info) {
+                    //println!("Relabeling and reconnection needed");
+                }
+            }
+        }
+    }
+
+    let cut_tree: Graph<NodeInfo, usize, Undirected, usize> = cut_tree.into_graph();
+    cut_tree
+}
+
+#[allow(dead_code)]
 fn text_export_graph(graph: &Graph<NodeInfo, usize, Directed, usize>) {
     println!("{} {}", graph.node_count(), graph.edge_count());
 
@@ -2721,6 +2960,7 @@ fn text_export_graph(graph: &Graph<NodeInfo, usize, Directed, usize>) {
     }
 }
 
+#[allow(dead_code)]
 fn generate_max_flow_clustering_graph(graph: &Graph<NodeInfo, usize, Directed, usize>, alpha: usize, weight_override: Option<usize>) -> Graph<NodeInfo, usize, Directed, usize> {
     let mut instance = graph.clone();
     let original_node_count = graph.node_count();
@@ -2764,6 +3004,46 @@ fn export_clustering_problem() {
     //text_export_graph(&graph, Some(5));
 }
 
+#[macro_use] extern crate scan_fmt;
+fn import_text_graph() -> Graph<NodeInfo, usize, Directed, usize> {
+   let (num_nodes, num_edges) = scanln_fmt!( "{d} {d}", usize, usize).unwrap();
+   //println!("Got {} and {}", num_nodes, num_edges);
+
+    let mut g = GraphMap::<NodeInfo, usize, Directed>::with_capacity(num_nodes, num_edges);
+
+    for i in 0..num_nodes {
+        g.add_node(NodeInfo{numerical_id: i, partition_id: 0});
+    }
+
+    for _ in 0..num_edges {
+       let (s, t, w) = scanln_fmt!( "{d} {d} {d}", usize, usize, usize).unwrap();
+       //println!("Got {} and {}", num_nodes, num_edges);
+
+       g.add_edge(NodeInfo{numerical_id: s, partition_id: 0}, NodeInfo{numerical_id: t, partition_id: 0}, w);
+    }
+
+    let g: Graph<NodeInfo, usize, Directed, usize> = g.into_graph();
+    g
+}
+
+fn import_and_visualize_graph() {
+    let imported_graph = import_text_graph();
+    visualize_graph(&imported_graph, None, Some("imported_max_flow_clustering".to_string()));
+}
+
+fn test_gusfield_gomory_hu_solver() {
+    let num_nodes = 32;
+    let num_edges = num_nodes * 2 - 2;
+    //let mixing_coeff = 0.003;
+    let mixing_coeff = 0.000;
+    let num_gen_communities = 2;
+    let max_comm_size_difference = 0;
+
+    let graph = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
+    println!("Finished generating random graph.");
+    gusfield_gomory_hu_solver(&graph);
+}
+
 fn main() {
     //gen_sample_graph_image();
     //test_histogram_01();
@@ -2777,5 +3057,7 @@ fn main() {
     //test_local_surprise_search();
     //test_local_permanence_search();
     //test_dinitz_max_flow();
-    export_clustering_problem();
+    //export_clustering_problem();
+    //import_and_visualize_graph();
+    test_gusfield_gomory_hu_solver();
 }
