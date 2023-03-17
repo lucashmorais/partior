@@ -1,7 +1,8 @@
 use petgraph::graph::*;
-use petgraph::Directed;
+use petgraph::{Directed, Undirected};
+use petgraph::EdgeType;
 use petgraph::graphmap::GraphMap;
-use petgraph::visit::IntoNodeReferences;
+use petgraph::visit::{IntoNodeReferences, IntoEdgeReferences};
 use petgraph::visit::NodeRef;
 use petgraph::algo::{dijkstra, min_spanning_tree};
 use petgraph::data::FromElements;
@@ -677,8 +678,9 @@ fn get_number_of_partitions(g: &Graph<NodeInfo, usize, Directed, usize>) -> usiz
     items_per_partition.len()
 }
 
-fn visualize_graph(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[Option<usize>]>, output_name: Option<String>) {
-    let null_out = |_, _| "".to_string();
+fn visualize_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>, pid_array: Option<&[Option<usize>]>, output_name: Option<String>) {
+    //let null_out = |_, _| "".to_string();
+    //let weight_label = |_, _| "derp".to_string();
     let mut g = g.clone();
 
     let out_name_unwrapped;
@@ -699,7 +701,11 @@ fn visualize_graph(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Optio
         }
     }
 
-    fn node_attr_generator<P: petgraph::visit::NodeRef>(_: &Graph<NodeInfo, usize, Directed, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
+    fn weight_label<T: EdgeType> (_: &Graph<NodeInfo, usize, T, usize>, edge_ref: EdgeReference<'_, usize, usize>) -> String {
+        format!("label={:?}", edge_ref.weight()).to_string()
+    }
+
+    fn node_attr_generator<P: petgraph::visit::NodeRef, T: EdgeType>(_: &Graph<NodeInfo, usize, T, usize>, node_ref: P) -> String where <P as petgraph::visit::NodeRef>::Weight: fmt::Debug + HasPartition {
         //let new_node_ref: NodeIndex;
         //new_node_ref = node_ref.into();
 
@@ -709,7 +715,8 @@ fn visualize_graph(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Optio
         format!("style=filled, color=\"{}\", fillcolor=\"{}\"", c, c).to_string()
     }
 
-    let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
+    //let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
+    let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &weight_label, &node_attr_generator));
     
     let _ = write_to_file(&dot_dump, out_name_unwrapped);
     //calculate_surprise(&g);
@@ -1711,7 +1718,7 @@ fn de_compact_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_gene
     }
 }
 
-fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num_communities: usize, max_comm_size_difference: usize) -> Graph<NodeInfo, usize, Directed, usize> {
+fn gen_lfr_like_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num_communities: usize, max_comm_size_difference: usize) -> Graph<NodeInfo, usize, T, usize> {
     let mut rng = rand::thread_rng();
 
     let d = max_comm_size_difference;
@@ -1750,7 +1757,7 @@ fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num
         missing_nodes -= 1;
     }
 
-    let mut g = GraphMap::<NodeInfo, usize, Directed>::with_capacity(num_nodes, num_edges);
+    let mut g = GraphMap::<NodeInfo, usize, T>::with_capacity(num_nodes, num_edges);
     assert!(g.node_count() == 0);
 
     for i in 0..num_nodes {
@@ -1780,7 +1787,7 @@ fn gen_lfr_like_graph(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num
         }
     }
 
-    let g: Graph<NodeInfo, usize, Directed, usize> = g.into_graph();
+    let g: Graph<NodeInfo, usize, T, usize> = g.into_graph();
     g
 }
 
