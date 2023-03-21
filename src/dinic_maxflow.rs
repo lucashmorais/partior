@@ -15,6 +15,7 @@ pub struct FlowEdge<T> {
     pub flow: T,
 }
 
+#[derive(Debug)]
 pub struct FlowResultEdge<T> {
     pub source: usize,
     pub sink: usize,

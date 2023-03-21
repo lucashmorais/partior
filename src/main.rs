@@ -26,12 +26,13 @@ use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
 
 use once_cell::sync::Lazy;
+use dinic_maxflow::*;
 
 mod dinic_maxflow;
 
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
-const MAX_NUMBER_OF_NODES: usize = 64;
+const MAX_NUMBER_OF_NODES: usize = 256;
 //const MAX_BINOMIAL_A: usize = 550000;
 const MAX_BINOMIAL_A: usize = 33000;
 const MAX_BINOMIAL_B: usize = 1024;
@@ -2728,15 +2729,15 @@ fn build_dinitz_instance(graph: &Graph<NodeInfo, usize, Undirected, usize>, sour
     flow
 }
 
-fn get_node_sets_from_min_cut(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, flow_edges: &Vec<FlowResultEdge<i64>>) -> Vec<HashSet<i64>> {
-    let mut node_sets: Vec<HashSet<i64>> = vec![];
+fn get_node_sets_from_min_cut(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, flow_edges: &Vec<FlowResultEdge<i64>>, source_node_id: usize, compute_sink_node_set: bool) -> Vec<HashSet<i64>> {
+    let mut node_sets: Vec<HashSet<i64>> = Vec::with_capacity(2);
 
     let start = Instant::now();
     //TODO-PERFORMANCE: Avoid cloning the tree here, since this function is called every time
     //                  max_flow needs to be calculated by `gusfield_gomory_hu_solver`
     let mut cut_tree = cut_tree.clone();
     println!("Time for cloning cut tree prior to cutting: {:?}", start.elapsed());
-    println!("[get_node_sets_from_min_cut]: flow_edges: {:?}", flow_edges);
+    //println!("[get_node_sets_from_min_cut]: flow_edges: {:?}", flow_edges);
 
     for e in flow_edges {
         let s = e.source;
@@ -2750,8 +2751,10 @@ fn get_node_sets_from_min_cut(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, 
     //Running the following line costs some 500 ns if there is a single edge to print
     //println!("[get_node_sets_from_min_cut]: flow_edges: {:?}", flow_edges);
 
-    let node_refs: Vec<(NodeInfo, &NodeInfo)> = cut_tree.node_references().collect();
-    let first_node = node_refs[0].id();
+    //let node_refs: Vec<(NodeInfo, &NodeInfo)> = cut_tree.node_references().collect();
+    // The first node should be the flow src, not any vertex
+    //let first_node = node_refs[0].id();
+    let first_node = NodeInfo{numerical_id: source_node_id, partition_id: 0};
     let mut parent_vec: Vec<Option<NodeInfo>> = vec![None; MAX_NUMBER_OF_NODES];
 
     let mut node_queue = vec![first_node];    
@@ -2759,89 +2762,52 @@ fn get_node_sets_from_min_cut(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, 
     // The version based on the BTreeMap has lower complexity,
     // but it performs worse than the simpler one for graphs
     // with 50K nodes or less.
-    let simple_version = true;
-    if simple_version {
-        let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
-        let mut set_id = 0;
-        'outer: loop {
-            node_sets.push(HashSet::new());
-            
-            while !node_queue.is_empty() {
-                let v = node_queue.pop().unwrap();
-                let v_id = v.numerical_id;
-                was_added[v_id] = true;
-                node_sets[set_id].insert(v_id as i64);
+    let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
+    let mut set_id = 0;
+    node_sets.push(HashSet::new());
+    
+    while !node_queue.is_empty() {
+        let v = node_queue.pop().unwrap();
+        let v_id = v.numerical_id;
+        was_added[v_id] = true;
+        node_sets[set_id].insert(v_id as i64);
 
-                for n in cut_tree.neighbors(v) {
-                    let n_id = n.numerical_id;
+        for n in cut_tree.neighbors(v) {
+            let n_id = n.numerical_id;
 
-                    if !was_added[n_id] {
-                        was_added[n_id] = true;
-                        parent_vec[n_id] = Some(v);
-                        node_queue.push(n);
-                    }
-                }
+            if !was_added[n_id] {
+                was_added[n_id] = true;
+                parent_vec[n_id] = Some(v);
+                node_queue.push(n);
             }
-            set_id += 1;
-
-            for v in cut_tree.node_references() {
-                let v_id = v.1.numerical_id;
-
-                if !was_added[v_id] {
-                    node_queue.push(v.id());
-                    continue 'outer;
-                }
-            }
-
-            break;
-        }
-    } else {
-        let mut unprocessed_nodes: BTreeMap<usize, NodeInfo> = BTreeMap::new();
-        for n in cut_tree.node_references() {
-            let n_id = n.id().numerical_id;
-            unprocessed_nodes.insert(n_id, n.id());
-        }
-
-        let mut set_id = 0;
-        loop {
-            node_sets.push(HashSet::new());
-            
-            while !node_queue.is_empty() {
-                let v = node_queue.pop().unwrap();
-                let v_id = v.numerical_id;
-                unprocessed_nodes.remove(&v_id);
-                node_sets[set_id].insert(v_id as i64);
-
-                for n in cut_tree.neighbors(v) {
-                    let n_id = n.numerical_id;
-                    let removal_result = unprocessed_nodes.remove(&n_id);
-
-                    if removal_result.is_some() {
-                        parent_vec[n_id] = Some(v);
-                        node_queue.push(n);
-                    }
-                }
-            }
-            set_id += 1;
-
-            if unprocessed_nodes.is_empty() {
-                break;
-            }
-
-            let new_node = unprocessed_nodes.pop_first().unwrap().1;
-            node_queue.push(new_node);
         }
     }
-    //println!("[get_node_sets_from_min_cut]: node_sets: {:?}", node_sets);
+
+    // Calculating the node set not containing the flow source node
+    // is not needed by Gusfield's algorithm, so we can frequently
+    // avoid this to reduce compute time.
+    if compute_sink_node_set {
+        node_sets.push(HashSet::new());
+        set_id += 1;
+
+        for v in cut_tree.node_references() {
+            let v_id = v.1.numerical_id;
+
+            if !was_added[v_id] {
+                node_sets[set_id].insert(v.id().numerical_id as i64);
+            }
+        }
+        //println!("[get_node_sets_from_min_cut]: node_sets: {:?}", node_sets);
+    }
 
     node_sets
 }
 
-fn get_max_flow_and_node_sets(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, flow_instance: &mut DinicMaxFlow<i64>) -> (i64, Vec<HashSet<i64>>) {
+fn get_max_flow_and_node_sets(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, flow_instance: &mut DinicMaxFlow<i64>, source_node_id: usize, compute_sink_node_set: bool) -> (i64, Vec<HashSet<i64>>) {
     let max_flow = flow_instance.find_maxflow(i64::MAX);
     let flow_edges = flow_instance.get_flow_edges(i64::MAX);
     //let (node_set_x, node_set_y) = get_node_sets_from_min_cut(&cut_tree, &flow_edges);
-    let node_sets = get_node_sets_from_min_cut(&cut_tree, &flow_edges);
+    let node_sets = get_node_sets_from_min_cut(&cut_tree, &flow_edges, source_node_id, compute_sink_node_set);
     //assert!(node_sets.len() == 2);
 
     (max_flow, node_sets)
@@ -2857,8 +2823,8 @@ fn gusfield_gomory_hu_solver(graph: &Graph<NodeInfo, usize, Undirected, usize>) 
     // TODO-PERFORMANCE: We should find a way to quickly clone DinicMaxFlow objects
     //                   rather than spend time rebuilding them from external data.
                        
-    println!("[gusfield_gomory_hu_solver]: Visualizing reference graph");
-    visualize_graph(&graph, None, Some("reference_graph".to_string()));
+    //println!("[gusfield_gomory_hu_solver]: Visualizing reference graph");
+    //visualize_graph(&graph, None, Some("reference_graph".to_string()));
 
     let mut cut_tree = GraphMap::<NodeInfo, usize, Undirected>::new();
     let num_nodes = graph.node_count();
@@ -2909,13 +2875,12 @@ fn gusfield_gomory_hu_solver(graph: &Graph<NodeInfo, usize, Undirected, usize>) 
             graph_map.add_edge(NodeInfo{numerical_id: a_id, partition_id: 0}, NodeInfo{numerical_id: b_id, partition_id: 0}, *w);
         }
 
-
-        let (max_flow, node_sets) = get_max_flow_and_node_sets(&graph_map, &mut flow_instance);
+        let (max_flow, node_sets) = get_max_flow_and_node_sets(&graph_map, &mut flow_instance, source, false);
         println!("Time for calculating max flow: {:?}", start.elapsed());
 
         let edge_to_label = cut_tree.edge_weight_mut(s_info, t_info).unwrap();
         *edge_to_label = max_flow as usize;
-        println!("max_flow({s}, {t}): {max_flow}");
+        //println!("max_flow({s}, {t}): {max_flow}");
 
         //if first && max_flow != 0 {
         if first {
@@ -2924,7 +2889,7 @@ fn gusfield_gomory_hu_solver(graph: &Graph<NodeInfo, usize, Undirected, usize>) 
             //visualize_graph(&cut_tree.clone().into_graph(), None, Some("cut_tree_flow_graph".to_string()));
         }
         
-        println!("node_sets: {:?}", node_sets);
+        //println!("node_sets: {:?}", node_sets);
 
         for i in 0..num_nodes {
             if i == s {
@@ -2934,11 +2899,11 @@ fn gusfield_gomory_hu_solver(graph: &Graph<NodeInfo, usize, Undirected, usize>) 
             let i_info = NodeInfo{numerical_id: i, partition_id: 0};
             //println!("(s, i, t) = ({s}, {i}, {t})");
 
-            for set_id in 0..node_sets.len() {
-                let set = &node_sets[set_id];
-                if set.contains(&(s as i64)) && set.contains(&(i as i64)) && cut_tree.contains_edge(i_info, t_info) {
-                    //println!("Relabeling and reconnection needed");
-                }
+            let set = &node_sets[0];
+            if set.contains(&(s as i64)) && set.contains(&(i as i64)) && cut_tree.contains_edge(i_info, t_info) {
+                //println!("Relabeling and reconnection needed");
+                let old_label = cut_tree.remove_edge(i_info, t_info).unwrap();
+                cut_tree.add_edge(s_info, i_info, old_label);
             }
         }
     }
@@ -3032,16 +2997,20 @@ fn import_and_visualize_graph() {
 }
 
 fn test_gusfield_gomory_hu_solver() {
-    let num_nodes = 32;
+    let num_nodes = 256;
     let num_edges = num_nodes * 2 - 2;
     //let mixing_coeff = 0.003;
     let mixing_coeff = 0.000;
-    let num_gen_communities = 2;
+    let num_gen_communities = 8;
     let max_comm_size_difference = 0;
 
     let graph = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
     println!("Finished generating random graph.");
-    gusfield_gomory_hu_solver(&graph);
+    let start = Instant::now();
+    let cut_tree = gusfield_gomory_hu_solver(&graph);
+    println!("Total Gusfield Gomory Hu solver time: {:?}", start.elapsed());
+
+    visualize_graph(&cut_tree, None, Some("gusfield_gomory_hu_cut_tree".to_string()));
 }
 
 fn main() {
