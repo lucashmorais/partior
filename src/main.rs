@@ -30,9 +30,10 @@ use dinic_maxflow::*;
 
 mod dinic_maxflow;
 
-const MAX_NUMBER_OF_PARTITIONS: usize = 8;
+const PRINT_WEIGHTS: bool = false;
+const MAX_NUMBER_OF_PARTITIONS: usize = 20;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
-const MAX_NUMBER_OF_NODES: usize = 256;
+const MAX_NUMBER_OF_NODES: usize = 257;
 //const MAX_BINOMIAL_A: usize = 550000;
 const MAX_BINOMIAL_A: usize = 33000;
 const MAX_BINOMIAL_B: usize = 1024;
@@ -681,8 +682,6 @@ fn get_number_of_partitions(g: &Graph<NodeInfo, usize, Directed, usize>) -> usiz
 }
 
 fn visualize_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>, pid_array: Option<&[Option<usize>]>, output_name: Option<String>) {
-    //let null_out = |_, _| "".to_string();
-    //let weight_label = |_, _| "derp".to_string();
     let mut g = g.clone();
 
     let out_name_unwrapped;
@@ -717,9 +716,13 @@ fn visualize_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>, pid_array:
         format!("style=filled, color=\"{}\", fillcolor=\"{}\"", c, c).to_string()
     }
 
-    //let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator));
-    let dot_dump = format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &weight_label, &node_attr_generator));
-    
+    let dot_dump = if PRINT_WEIGHTS {
+        format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &weight_label, &node_attr_generator))
+    } else {
+        let null_out = |_, _| "".to_string();
+        format!("{:?}", Dot::with_attr_getters(&g, &[Config::EdgeNoLabel], &null_out, &node_attr_generator))
+    };
+
     let _ = write_to_file(&dot_dump, out_name_unwrapped);
     //calculate_surprise(&g);
 }
@@ -2710,7 +2713,7 @@ fn test_dinitz_max_flow() {
     println!("Total time for computing max-flow {NUM_SOLVER_EVALUATIONS} times: {:?}", total_compute_time);
 }
 
-fn build_dinitz_instance(graph: &Graph<NodeInfo, usize, Undirected, usize>, source: usize, sink: usize) -> DinicMaxFlow<i64> {
+fn build_dinitz_instance<T: EdgeType>(graph: &Graph<NodeInfo, usize, T, usize>, source: usize, sink: usize) -> DinicMaxFlow<i64> {
     let num_nodes = graph.node_count();
     let mut flow: DinicMaxFlow<i64> = DinicMaxFlow::new(source, sink, num_nodes);
 
@@ -2742,8 +2745,19 @@ fn get_node_sets_from_min_cut(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, 
     for e in flow_edges {
         let s = e.source;
         let t = e.sink;
+        let flow = e.flow;
 
-        cut_tree.remove_edge(NodeInfo{numerical_id: s, partition_id: 0}, NodeInfo{numerical_id: t, partition_id: 0});
+        let s_info = NodeInfo{numerical_id: s, partition_id: 0};
+        let t_info = NodeInfo{numerical_id: t, partition_id: 0};
+
+        let capacity = cut_tree.edge_weight(s_info, t_info);
+
+        if capacity.is_some() {
+            let capacity = *capacity.unwrap() as i64;
+            if flow == (capacity as i64) {
+                cut_tree.remove_edge(NodeInfo{numerical_id: s, partition_id: 0}, NodeInfo{numerical_id: t, partition_id: 0});
+            }
+        }
     }
 
     //visualize_graph(&cut_tree.clone().into_graph(), None, Some("cut_tree_after_cutting".to_string()));
@@ -2819,7 +2833,7 @@ fn get_max_flow_and_node_sets(cut_tree: &GraphMap<NodeInfo, usize, Undirected>, 
 //
 // This implementation ignores directionality and will output an undirected tree.
 #[allow(dead_code)]
-fn gusfield_gomory_hu_solver(graph: &Graph<NodeInfo, usize, Undirected, usize>) -> Graph<NodeInfo, usize, Undirected, usize> {
+fn gusfield_gomory_hu_solver<T: EdgeType>(graph: &Graph<NodeInfo, usize, T, usize>) -> GraphMap<NodeInfo, usize, Undirected> {
     // TODO-PERFORMANCE: We should find a way to quickly clone DinicMaxFlow objects
     //                   rather than spend time rebuilding them from external data.
                        
@@ -2880,7 +2894,7 @@ fn gusfield_gomory_hu_solver(graph: &Graph<NodeInfo, usize, Undirected, usize>) 
 
         let edge_to_label = cut_tree.edge_weight_mut(s_info, t_info).unwrap();
         *edge_to_label = max_flow as usize;
-        //println!("max_flow({s}, {t}): {max_flow}");
+        println!("max_flow({s}, {t}): {max_flow}");
 
         //if first && max_flow != 0 {
         if first {
@@ -2901,19 +2915,19 @@ fn gusfield_gomory_hu_solver(graph: &Graph<NodeInfo, usize, Undirected, usize>) 
 
             let set = &node_sets[0];
             if set.contains(&(s as i64)) && set.contains(&(i as i64)) && cut_tree.contains_edge(i_info, t_info) {
-                //println!("Relabeling and reconnection needed");
+                println!("Removing ({i}, {t}) and adding ({s}, {i})");
                 let old_label = cut_tree.remove_edge(i_info, t_info).unwrap();
                 cut_tree.add_edge(s_info, i_info, old_label);
             }
         }
     }
 
-    let cut_tree: Graph<NodeInfo, usize, Undirected, usize> = cut_tree.into_graph();
+    //let cut_tree: Graph<NodeInfo, usize, Undirected, usize> = cut_tree.into_graph();
     cut_tree
 }
 
 #[allow(dead_code)]
-fn text_export_graph(graph: &Graph<NodeInfo, usize, Directed, usize>) {
+fn text_export_graph<T: EdgeType>(graph: &Graph<NodeInfo, usize, T, usize>) {
     println!("{} {}", graph.node_count(), graph.edge_count());
 
     for e in graph.edge_references() {
@@ -2926,7 +2940,7 @@ fn text_export_graph(graph: &Graph<NodeInfo, usize, Directed, usize>) {
 }
 
 #[allow(dead_code)]
-fn generate_max_flow_clustering_graph(graph: &Graph<NodeInfo, usize, Directed, usize>, alpha: usize, weight_override: Option<usize>) -> Graph<NodeInfo, usize, Directed, usize> {
+fn generate_max_flow_clustering_graph<T: EdgeType>(graph: &Graph<NodeInfo, usize, T, usize>, alpha: usize, weight_override: Option<usize>) -> Graph<NodeInfo, usize, T, usize> {
     let mut instance = graph.clone();
     let original_node_count = graph.node_count();
 
@@ -2963,7 +2977,7 @@ fn export_clustering_problem() {
     let num_gen_communities = 8;
     let max_comm_size_difference = 0;
 
-    let graph = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
+    let graph: Graph<NodeInfo, usize, Undirected, usize> = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
 
     text_export_graph(&generate_max_flow_clustering_graph(&graph, 1, Some(5)));
     //text_export_graph(&graph, Some(5));
@@ -2996,6 +3010,110 @@ fn import_and_visualize_graph() {
     visualize_graph(&imported_graph, None, Some("imported_max_flow_clustering".to_string()));
 }
 
+fn get_node_vecs<T: EdgeType>(graph: &GraphMap<NodeInfo, usize, T>) -> Vec<Vec<usize>> {
+    let mut node_vecs = vec![];
+
+    let node_refs: Vec<(NodeInfo, &NodeInfo)> = graph.node_references().collect();
+    let first_node = node_refs[0].id();
+    let mut parent_vec: Vec<Option<NodeInfo>> = vec![None; MAX_NUMBER_OF_NODES];
+
+    let mut node_queue = vec![first_node];    
+
+    let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
+    let mut set_id = 0;
+    'outer: loop {
+        node_vecs.push(vec![]);
+        
+        while !node_queue.is_empty() {
+            let v = node_queue.pop().unwrap();
+            let v_id = v.numerical_id;
+            was_added[v_id] = true;
+            node_vecs[set_id].push(v_id);
+
+            for n in graph.neighbors(v) {
+                let n_id = n.numerical_id;
+
+                if !was_added[n_id] {
+                    was_added[n_id] = true;
+                    parent_vec[n_id] = Some(v);
+                    node_queue.push(n);
+                }
+            }
+        }
+        set_id += 1;
+
+        for v in graph.node_references() {
+            let v_id = v.1.numerical_id;
+
+            if !was_added[v_id] {
+                node_queue.push(v.id());
+                continue 'outer;
+            }
+        }
+
+        break;
+    }
+
+    node_vecs
+}
+
+//TODO
+fn max_flow_cluster<T: EdgeType>(graph: &Graph<NodeInfo, usize, T, usize>, alpha: usize, weight_override: Option<usize>) -> Vec<usize> {
+    let mut pid_array = vec![];
+    pid_array.resize(graph.node_count(), 0);
+    let weight = weight_override.unwrap_or(1);
+
+    let mut cut_tree = gusfield_gomory_hu_solver(&graph);
+    visualize_graph(&cut_tree.into_graph(), None, Some(format!("max_flow_reference_cut_tree").to_string()));
+
+    let clustering_instance = generate_max_flow_clustering_graph(graph, alpha, weight_override);
+    visualize_graph(&clustering_instance, None, Some(format!("max_flow_clustering_instance_alpha{alpha}").to_string()));
+    let mut cut_tree = gusfield_gomory_hu_solver(&clustering_instance);
+
+    let fake_sink_nid = cut_tree.node_count() - 1;
+    let fake_sink = cut_tree.node_references().find(|x| x.1.numerical_id == fake_sink_nid).unwrap().id();
+
+    let num_nodes = cut_tree.node_count() - 1;
+    visualize_graph(&cut_tree.clone().into_graph(), None, Some(format!("max_flow_clustering_cut_tree_with_fake_sink_n{num_nodes}_alpha{alpha}_weight{weight}").to_string()));
+
+    cut_tree.remove_node(fake_sink);
+
+    let num_nodes = cut_tree.node_count();
+    visualize_graph(&cut_tree.clone().into_graph(), None, Some(format!("max_flow_clustering_cut_tree_n{num_nodes}_alpha{alpha}_weight{weight}").to_string()));
+
+    let node_vecs = get_node_vecs(&cut_tree);
+
+    for (i, node_vec) in node_vecs.into_iter().enumerate() {
+        for nid in node_vec {
+            pid_array[nid] = i;
+        }
+    }
+
+    pid_array
+}
+
+fn test_max_flow_clustering() {
+    let num_nodes = 256;
+    let num_edges = num_nodes * 2 - 2;
+    //let mixing_coeff = 0.003;
+    let mixing_coeff = 0.001;
+    let num_gen_communities = 8;
+    let max_comm_size_difference = 0;
+    let alpha = 1;
+    let weight = 10;
+
+    let graph: Graph<NodeInfo, usize, Undirected, usize> = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
+    visualize_graph(&graph, None, Some(format!("max_flow_clustering_reference_n{num_nodes}_alpha{alpha}_weight{weight}_mixing{mixing_coeff}_num_comm{num_gen_communities}").to_string()));
+
+    let pid_array = max_flow_cluster(&graph, alpha, Some(weight));
+    println!("[test_max_flow_clustering]: pid_array: {:?}", pid_array);
+
+    visualize_graph(&graph, Some(&array_to_vec(&pid_array)), Some(format!("max_flow_clustered_graph_n{num_nodes}_alpha{alpha}_weight{weight}_mixing{mixing_coeff}_num_comm{num_gen_communities}").to_string()));
+    println!("[test_max_flow_clustering]: Test finished.");
+
+    //text_export_graph(&generate_max_flow_clustering_graph(&graph, 1, Some(5)));
+}
+
 fn test_gusfield_gomory_hu_solver() {
     let num_nodes = 256;
     let num_edges = num_nodes * 2 - 2;
@@ -3004,13 +3122,13 @@ fn test_gusfield_gomory_hu_solver() {
     let num_gen_communities = 8;
     let max_comm_size_difference = 0;
 
-    let graph = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
+    let graph: Graph<NodeInfo, usize, Undirected, usize> = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
     println!("Finished generating random graph.");
     let start = Instant::now();
     let cut_tree = gusfield_gomory_hu_solver(&graph);
     println!("Total Gusfield Gomory Hu solver time: {:?}", start.elapsed());
 
-    visualize_graph(&cut_tree, None, Some("gusfield_gomory_hu_cut_tree".to_string()));
+    visualize_graph(&cut_tree.into_graph(), None, Some("gusfield_gomory_hu_cut_tree".to_string()));
 }
 
 fn main() {
@@ -3028,5 +3146,7 @@ fn main() {
     //test_dinitz_max_flow();
     //export_clustering_problem();
     //import_and_visualize_graph();
-    test_gusfield_gomory_hu_solver();
+
+    //test_gusfield_gomory_hu_solver();
+    test_max_flow_clustering();
 }
