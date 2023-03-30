@@ -85,6 +85,15 @@ impl HasPartition for NodeInfo {
   }
 }
 
+impl NodeInfo {
+    pub fn new(n_id: usize) -> Self {
+        Self {
+            numerical_id: n_id,
+            partition_id: 0
+        }
+    }
+}
+
 #[allow(dead_code)]
 const COLORS: &'static [&'static str] = &["#d9ed92", "#b5e48c", "#99d98c", "#76c893", "#52b69a", "#34a0a4", "#168aad", "#1a759f", "#1e6091", "#184e77", "#797d62", "#9b9b7a", "#baa587", "#d9ae94", "#f1dca7", "#ffcb69", "#e8ac65", "#d08c60", "#b58463", "#997b66", "#250902", "#38040e", "#640d14", "#800e13", "#ad2831"];
 
@@ -3131,6 +3140,117 @@ pub fn test_max_flow_clustering() {
     println!("[test_max_flow_clustering]: Test finished.");
 
     //text_export_graph(&generate_max_flow_clustering_graph(&graph, 1, Some(5)));
+}
+
+struct DepGraph {
+    writer_task_per_dep: HashMap<usize, usize>,
+    reader_tasks_per_dep: HashMap<usize, Vec<usize>>,
+
+    // TODO-PERFORMANCE
+    // We might want to replace these HashMaps with Vecs,
+    // given that the maximum number of in-flight tasks
+    // is limited. That could slightly improve our
+    // performance here.
+    write_deps_per_task: HashMap<usize, Vec<usize>>,
+    read_deps_per_task: HashMap<usize, Vec<usize>>,
+    task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>
+}
+
+impl DepGraph {
+    pub fn new() -> Self {
+        Self {
+            writer_task_per_dep: HashMap::new(),
+            reader_tasks_per_dep: HashMap::new(),
+            write_deps_per_task: HashMap::new(),
+            read_deps_per_task: HashMap::new(),
+            task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>::new()
+        }
+    }
+
+    pub fn add_task_write_dep(&mut self, task: usize, dep: usize) {
+        let deps_vec = self.write_deps_per_task.get_mut(&task);
+
+        if deps_vec.is_some() {
+            let deps_vec = deps_vec.unwrap();
+            deps_vec.push(dep);
+        } else {
+            let deps_vec = vec![dep];
+            self.write_deps_per_task.insert(task, deps_vec);
+        }
+
+        // We use "mut" here to indicate that
+        // the closure is not idempotent
+        // https://doc.rust-lang.org/std/ops/trait.FnMut.html
+        let mut make_descendant_of_task = |dep_holder_task: usize| {
+            let dep_holder_task = NodeInfo::new(dep_holder_task);
+            let task = NodeInfo::new(task);
+
+            let old_w = self.task_dependency_graph.edge_weight(dep_holder_task, task);
+
+            if let Some(old_w) = old_w {
+                self.task_dependency_graph.add_edge(dep_holder_task, task, *old_w + 1);
+            } else {
+                self.task_dependency_graph.add_edge(dep_holder_task, task, 1);
+            }
+        };
+
+        if let Some(reader_tasks_vec) = self.reader_tasks_per_dep.get(&dep) {
+            for reader_task in reader_tasks_vec {
+                make_descendant_of_task(*reader_task);
+            }
+        }
+
+        if let Some(writer_task) = self.writer_task_per_dep.get(&dep) {
+            make_descendant_of_task(*writer_task);
+        }
+    }
+
+    pub fn add_task_read_dep(&mut self, task: usize, dep: usize) {
+        let deps_vec = self.read_deps_per_task.get_mut(&task);
+
+        if deps_vec.is_some() {
+            let deps_vec = deps_vec.unwrap();
+            deps_vec.push(dep);
+        } else {
+            let deps_vec = vec![dep];
+            self.read_deps_per_task.insert(task, deps_vec);
+        }
+
+        let reader_tasks_vec = self.reader_tasks_per_dep.get_mut(&dep);
+
+        if reader_tasks_vec.is_some() {
+            let reader_tasks_vec = reader_tasks_vec.unwrap();
+            reader_tasks_vec.push(task);
+        } else {
+            let reader_tasks_vec = vec![task];
+            self.reader_tasks_per_dep.insert(dep, reader_tasks_vec);
+        }
+
+        if let Some(owner_task) = self.writer_task_per_dep.get(&dep) {
+            let owner_task = NodeInfo::new(*owner_task);
+            let task = NodeInfo::new(task);
+
+            let old_w = self.task_dependency_graph.edge_weight(owner_task, task);
+
+            if let Some(old_w) = old_w {
+                self.task_dependency_graph.add_edge(owner_task, task, *old_w + 1);
+            } else {
+                self.task_dependency_graph.add_edge(owner_task, task, 1);
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.writer_task_per_dep.clear();
+        self.reader_tasks_per_dep.clear();
+        self.write_deps_per_task.clear();
+        self.read_deps_per_task.clear();
+        self.task_dependency_graph.clear();
+    }
+}
+
+pub fn test_task_dependency_graph_generation() {
+
 }
 
 #[no_mangle]
