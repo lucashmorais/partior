@@ -3253,6 +3253,7 @@ impl DepGraph {
     }
 
     pub fn add_task(&mut self, task: usize) {
+        self.dep_counter_per_task.insert(task, 0);
         let task = NodeInfo::new(task);
         self.task_dependency_graph.add_node(task);
     }
@@ -3282,7 +3283,10 @@ impl DepGraph {
         // Clearing the existing vector might be faster than
         // replacing it with an empty one, since the latter
         // would trigger memory allocation.
-        self.read_deps_per_task.get_mut(&task).unwrap().clear();
+        
+        if let Some(read_deps) = self.read_deps_per_task.get_mut(&task) {
+            read_deps.clear();
+        }
 
         // # Write deps
         // Trigger changes to depending tasks
@@ -3305,6 +3309,8 @@ impl DepGraph {
                 }
             }
         }
+
+        self.dep_counter_per_task.remove(&task);
     }
 
     pub fn pop_ready_task(&mut self) -> Option<usize> {
