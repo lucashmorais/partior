@@ -3147,10 +3147,10 @@ pub struct DepGraph {
     reader_tasks_per_dep: HashMap<usize, Vec<usize>>,
 
     // TODO-PERFORMANCE
-    // We might want to replace these HashMaps with Vecs,
-    // given that the maximum number of in-flight tasks
-    // is limited. That could slightly improve our
-    // performance here.
+    // If we really wanted to extract as much performance
+    // as possible from this, we should implement our own
+    // HashMaps and arrays to avoid memory reallocations
+    // as much as possible.
     write_deps_per_task: HashMap<usize, Vec<usize>>,
     read_deps_per_task: HashMap<usize, Vec<usize>>,
     task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>,
@@ -3260,7 +3260,7 @@ impl DepGraph {
 
     pub fn finish_adding_task(&mut self, task: usize) {
         if *self.dep_counter_per_task.get(&task).unwrap_or(&1) == 0 {
-            println!("Just finished adding the ready-born task with id: {}", task);
+            //println!("Just finished adding the ready-born task with id: {}", task);
             self.ready_tasks.push(task);
         }
     }
@@ -3276,7 +3276,10 @@ impl DepGraph {
                 }
 
                 let read_vec = self.reader_tasks_per_dep.get_mut(&r_dep).unwrap();
-                read_vec.swap_remove(read_vec.iter().position(|x| *x == task).expect("task not found among dep readers"));
+
+                if let Some(removal_index) = read_vec.iter().position(|x| *x == task) {
+                    read_vec.swap_remove(removal_index);
+                }
             }
         }
         // Clear task read deps
