@@ -3307,7 +3307,13 @@ impl DepGraph {
         }
     }
 
-    //TODO: Add functions for interacting with existing elements in the ready queue
+    pub fn pop_ready_task(&mut self) -> Option<usize> {
+        self.ready_tasks.pop()
+    }
+
+    pub fn num_ready_tasks(&self) -> usize {
+        self.ready_tasks.len()
+    }
 
     pub fn clear(&mut self) {
         self.writer_task_per_dep.clear();
@@ -3315,6 +3321,7 @@ impl DepGraph {
         self.write_deps_per_task.clear();
         self.read_deps_per_task.clear();
         self.task_dependency_graph.clear();
+        self.ready_tasks.clear();
     }
 
     pub fn visualize_graph(&self, output_name: Option<String>) {
