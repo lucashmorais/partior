@@ -3142,7 +3142,7 @@ pub fn test_max_flow_clustering() {
     //text_export_graph(&generate_max_flow_clustering_graph(&graph, 1, Some(5)));
 }
 
-struct DepGraph {
+pub struct DepGraph {
     writer_task_per_dep: HashMap<usize, usize>,
     reader_tasks_per_dep: HashMap<usize, Vec<usize>>,
 
@@ -3153,7 +3153,9 @@ struct DepGraph {
     // performance here.
     write_deps_per_task: HashMap<usize, Vec<usize>>,
     read_deps_per_task: HashMap<usize, Vec<usize>>,
-    task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>
+    task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>,
+    ready_tasks: Vec<usize>,
+    dep_counter_per_task: HashMap<usize, usize>
 }
 
 impl DepGraph {
@@ -3163,7 +3165,9 @@ impl DepGraph {
             reader_tasks_per_dep: HashMap::new(),
             write_deps_per_task: HashMap::new(),
             read_deps_per_task: HashMap::new(),
-            task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>::new()
+            task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>::new(),
+            ready_tasks: vec![],
+            dep_counter_per_task: HashMap::new()
         }
     }
 
@@ -3194,17 +3198,25 @@ impl DepGraph {
             }
         };
 
-        if let Some(reader_tasks_vec) = self.reader_tasks_per_dep.get(&dep) {
-            for reader_task in reader_tasks_vec {
+        if let Some(reader_tasks_vec) = self.reader_tasks_per_dep.get_mut(&dep) {
+            for reader_task in &mut *reader_tasks_vec {
                 make_descendant_of_task(*reader_task);
             }
+
+            reader_tasks_vec.clear();
+
+            assert!(self.reader_tasks_per_dep.get_mut(&dep).unwrap().is_empty(), "reader_task_vec was not cleared");
         }
 
-        if let Some(writer_task) = self.writer_task_per_dep.get(&dep) {
+
+        if let Some(writer_task) = self.writer_task_per_dep.get_mut(&dep) {
             make_descendant_of_task(*writer_task);
+            *writer_task = task;
         }
     }
 
+    // TODO: Develop some way of ensuring that the same dependence
+    //       is not added as both a read and a write dependence
     pub fn add_task_read_dep(&mut self, task: usize, dep: usize) {
         let deps_vec = self.read_deps_per_task.get_mut(&task);
 
@@ -3214,16 +3226,6 @@ impl DepGraph {
         } else {
             let deps_vec = vec![dep];
             self.read_deps_per_task.insert(task, deps_vec);
-        }
-
-        let reader_tasks_vec = self.reader_tasks_per_dep.get_mut(&dep);
-
-        if reader_tasks_vec.is_some() {
-            let reader_tasks_vec = reader_tasks_vec.unwrap();
-            reader_tasks_vec.push(task);
-        } else {
-            let reader_tasks_vec = vec![task];
-            self.reader_tasks_per_dep.insert(dep, reader_tasks_vec);
         }
 
         if let Some(owner_task) = self.writer_task_per_dep.get(&dep) {
@@ -3238,7 +3240,74 @@ impl DepGraph {
                 self.task_dependency_graph.add_edge(owner_task, task, 1);
             }
         }
+
+        let reader_tasks_vec = self.reader_tasks_per_dep.get_mut(&dep);
+
+        if reader_tasks_vec.is_some() {
+            let reader_tasks_vec = reader_tasks_vec.unwrap();
+            reader_tasks_vec.push(task);
+        } else {
+            let reader_tasks_vec = vec![task];
+            self.reader_tasks_per_dep.insert(dep, reader_tasks_vec);
+        }
     }
+
+    pub fn add_task(&mut self, task: usize) {
+        let task = NodeInfo::new(task);
+        self.task_dependency_graph.add_node(task);
+    }
+
+    pub fn finish_adding_task(&mut self, task: usize) {
+        if *self.dep_counter_per_task.get(&task).unwrap_or(&1) == 0 {
+            println!("Just finished adding the ready-born task with id: {}", task);
+            self.ready_tasks.push(task);
+        }
+    }
+
+    pub fn retire_task(&mut self, task: usize) {
+        // # Read deps
+        // Trigger changes to depending tasks
+        if let Some(read_deps) = self.read_deps_per_task.get(&task) {
+            for r_dep in read_deps {
+                if let Some(war_dependent_task) = self.writer_task_per_dep.get(&r_dep) {
+                    let counter = self.dep_counter_per_task.get_mut(&war_dependent_task).unwrap();
+                    *counter -= 1;
+                }
+
+                let read_vec = self.reader_tasks_per_dep.get_mut(&r_dep).unwrap();
+                read_vec.swap_remove(read_vec.iter().position(|x| *x == task).expect("task not found among dep readers"));
+            }
+        }
+        // Clear task read deps
+        // Clearing the existing vector might be faster than
+        // replacing it with an empty one, since the latter
+        // would trigger memory allocation.
+        self.read_deps_per_task.get_mut(&task).unwrap().clear();
+
+        // # Write deps
+        // Trigger changes to depending tasks
+        if let Some(write_deps) = self.write_deps_per_task.get(&task) {
+            for w_dep in write_deps {
+                if let Some(waw_dependent_task) = self.writer_task_per_dep.get(&w_dep) {
+                    if *waw_dependent_task != task {
+                        let counter = self.dep_counter_per_task.get_mut(waw_dependent_task).unwrap();
+                        *counter -= 1;
+                    } else {
+                        self.writer_task_per_dep.remove(&w_dep);
+                    }
+                }
+
+                if let Some(raw_dependent_tasks) = self.reader_tasks_per_dep.get(&w_dep) {
+                    for raw_dependent_task in raw_dependent_tasks {
+                        let counter = self.dep_counter_per_task.get_mut(&raw_dependent_task).unwrap();
+                        *counter -= 1;
+                    }
+                }
+            }
+        }
+    }
+
+    //TODO: Add functions for interacting with existing elements in the ready queue
 
     pub fn clear(&mut self) {
         self.writer_task_per_dep.clear();
@@ -3247,10 +3316,10 @@ impl DepGraph {
         self.read_deps_per_task.clear();
         self.task_dependency_graph.clear();
     }
-}
 
-pub fn test_task_dependency_graph_generation() {
-
+    pub fn visualize_graph(&self, output_name: Option<String>) {
+        visualize_graph(&self.task_dependency_graph.clone().into_graph(), None, output_name);
+    }
 }
 
 #[no_mangle]
