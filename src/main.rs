@@ -305,8 +305,8 @@ fn test_task_dependency_graph_generation_and_retirement() {
 
     const MAX_OUT_DEPS_PER_TASK: usize = 4;
     const MAX_IN_DEPS_PER_TASK: usize = 4;
-    const ADDRESS_SPACE_SIZE: usize = 100;
-    const NUM_TASKS: usize = 256;
+    const ADDRESS_SPACE_SIZE: usize = 20;
+    const NUM_TASKS: usize = 100000;
 
     let mut read_dep_arr: [usize; MAX_IN_DEPS_PER_TASK] = [0; MAX_IN_DEPS_PER_TASK];
     let mut write_dep_arr: [usize; MAX_OUT_DEPS_PER_TASK] = [0; MAX_OUT_DEPS_PER_TASK];
@@ -369,7 +369,46 @@ fn test_task_dependency_graph_generation_and_retirement() {
 
     println!("Total time {:?}", time_gen + time_ret);
 
-    dep_graph.visualize_graph(Some(format!("task_dependency_graph")));
+    //dep_graph.visualize_graph(Some(format!("task_dependency_graph")));
+}
+
+fn test_task_dependency_graph_generation_and_retirement_parametrized(chain: bool, num_deps: usize) {
+    let mut dep_graph = DepGraph::new();
+    let mut rng = rand::thread_rng();
+
+    const NUM_TASKS: usize = 100000;
+
+    let time_gen = Instant::now();
+    for i in 0..NUM_TASKS {
+        dep_graph.add_task(i);
+
+        for k in 0..num_deps {
+            if chain {
+                dep_graph.add_task_write_dep(i, k);
+            } else {
+                dep_graph.add_task_read_dep(i, k);
+            }
+        }
+
+        dep_graph.finish_adding_task(i);
+    }
+    let time_gen = time_gen.elapsed();
+    println!("Time to generate random graph: {:?}", time_gen);
+
+    // TODO: Remove println from inside time measurement zone
+    let time_ret = Instant::now();
+    //println!("Number of ready tasks: {}", dep_graph.num_ready_tasks());
+    while dep_graph.num_ready_tasks() > 0 {
+        //println!("Number of ready tasks: {}", dep_graph.num_ready_tasks());
+        let task = dep_graph.pop_ready_task().unwrap();
+        dep_graph.retire_task(task);
+    }
+    let time_ret = time_ret.elapsed();
+    println!("Time to retire all tasks: {:?}", time_ret);
+
+    println!("Total time {:?}", time_gen + time_ret);
+
+    //dep_graph.visualize_graph(Some(format!("task_dependency_graph")));
 }
 
 fn main() {
@@ -394,6 +433,7 @@ fn main() {
     
     //test_task_dependency_graph_generation();
     test_task_dependency_graph_generation_and_retirement();
+    //test_task_dependency_graph_generation_and_retirement_parametrized(true, 15);
 
     //test_hashed_permutation();
     
