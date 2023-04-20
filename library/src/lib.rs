@@ -3152,52 +3152,74 @@ pub struct DepGraph {
     // as possible from this, we should implement our own
     // HashMaps and arrays to avoid memory reallocations
     // as much as possible and use faster hash functions.
-    write_deps_per_task: Vec<Vec<usize>>,
-    read_deps_per_task: Vec<Vec<usize>>,
+    //write_deps_per_task: Vec<Vec<usize>>,
+    //read_deps_per_task: Vec<Vec<usize>>,
+    write_deps_per_task: FxHashMap<usize, Vec<usize>>,
+    read_deps_per_task: FxHashMap<usize, Vec<usize>>,
     task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>,
     ready_tasks: Vec<usize>,
-    dep_counter_per_task: Vec<usize>,
+    dep_counter_per_task: FxHashMap<usize, usize>,
     use_adj_matrix: bool,
+    //parents_per_task: FxHashMap<usize, FxHashSet<usize>>
 }
 
 // TODO: Add checks for ensuring that we
 //       block submission when we have
 //       MAX_NUM_TASKS in-flight tasks.
-const MAX_NUM_TASKS: usize = 100000;
+//const MAX_NUM_TASKS: usize = 100000;
 
 impl DepGraph {
     pub fn new(use_matrix: bool) -> Self {
 
-        let mut obj = Self {
+        let obj = Self {
             writer_task_per_dep: FxHashMap::default(),
             reader_tasks_per_dep: FxHashMap::default(),
-            write_deps_per_task: Vec::with_capacity(MAX_NUM_TASKS),
-            read_deps_per_task: Vec::with_capacity(MAX_NUM_TASKS),
+            //write_deps_per_task: Vec::with_capacity(MAX_NUM_TASKS),
+            //read_deps_per_task: Vec::with_capacity(MAX_NUM_TASKS),
+            write_deps_per_task: FxHashMap::default(),
+            read_deps_per_task: FxHashMap::default(),
             task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>::new(),
             ready_tasks: vec![],
-            dep_counter_per_task: vec![0; MAX_NUM_TASKS],
-            use_adj_matrix: use_matrix
+            //dep_counter_per_task: vec![0; MAX_NUM_TASKS],
+            dep_counter_per_task: FxHashMap::default(),
+            use_adj_matrix: use_matrix,
+            //parents_per_task: FxHashMap::default()
         };
 
+        /*
         for _ in 0..MAX_NUM_TASKS {
             obj.write_deps_per_task.push(vec![]);
             obj.read_deps_per_task.push(vec![]);
         }
+        */
 
         obj
     }
 
     pub fn add_task_write_dep(&mut self, task: usize, dep: usize) {
-        let deps_vec = self.write_deps_per_task.get_mut(task).unwrap();
-
+        /*
+        let deps_vec = self.write_deps_per_task.get_mut(&task).unwrap();
         deps_vec.push(dep);
+        */
+
+        if let Some(deps_vec) = self.write_deps_per_task.get_mut(&task) {
+            deps_vec.push(dep);
+        } else {
+            self.read_deps_per_task.insert(task, vec![dep]);
+        }
 
         // We use "mut" here to indicate that
         // the closure is not idempotent
         // https://doc.rust-lang.org/std/ops/trait.FnMut.html
         let mut make_descendant_of_task = |dep_holder_task: usize| {
-            let counter = self.dep_counter_per_task.get_mut(task).unwrap();
-            *counter += 1;
+            // TODO-STABILITY: We might need to ensure that this counter
+            //                 is only increased once for each (parent, son)
+            //                 relationship.
+            if let Some(counter) = self.dep_counter_per_task.get_mut(&task) {
+                *counter += 1;
+            } else {
+                self.dep_counter_per_task.insert(task, 1);
+            }
 
             if self.use_adj_matrix {
                 let dep_holder_task = NodeInfo::new(dep_holder_task);
@@ -3210,6 +3232,18 @@ impl DepGraph {
                 } else {
                     self.task_dependency_graph.add_edge(dep_holder_task, task, 1);
                 }
+            } else {
+                /*
+                if let Some(parents_set) = self.parents_per_task.get_mut(&task) {
+                    if !parents_set.contains(&dep_holder_task) {
+                        parents_set.insert(dep_holder_task);
+                    }
+                } else {
+                    let mut set = FxHashSet::default();
+                    set.insert(dep_holder_task);
+                    self.parents_per_task.insert(task, set);
+                }
+                */
             }
         };
 
@@ -3237,13 +3271,23 @@ impl DepGraph {
     // TODO: Develop some way of ensuring that the same dependence
     //       is not added as both a read and a write dependence
     pub fn add_task_read_dep(&mut self, task: usize, dep: usize) {
-        let deps_vec = self.read_deps_per_task.get_mut(task).unwrap();
-
+        /*
+        let deps_vec = self.read_deps_per_task.get_mut(&task).unwrap();
         deps_vec.push(dep);
+        */
+
+        if let Some(deps_vec) = self.read_deps_per_task.get_mut(&task) {
+            deps_vec.push(dep);
+        } else {
+            self.read_deps_per_task.insert(task, vec![dep]);
+        }
 
         if let Some(owner_task) = self.writer_task_per_dep.get(&dep) {
-            let counter = self.dep_counter_per_task.get_mut(task).unwrap();
-            *counter += 1;
+            if let Some(counter) = self.dep_counter_per_task.get_mut(&task) {
+                *counter += 1;
+            } else {
+                self.dep_counter_per_task.insert(task, 1);
+            }
 
             if self.use_adj_matrix {
                 let owner_task = NodeInfo::new(*owner_task);
@@ -3281,7 +3325,12 @@ impl DepGraph {
     }
 
     pub fn finish_adding_task(&mut self, task: usize) {
-        if self.dep_counter_per_task[task] == 0 {
+        // TODO-PERFORMANCE
+        // We could avoid checking this for tasks without
+        // dependencies by obtaining more information of
+        // task type from the caller.
+        let counter = self.dep_counter_per_task.get(&task).unwrap_or(&0);
+        if *counter == 0 {
             self.ready_tasks.push(task);
         }
     }
@@ -3289,16 +3338,16 @@ impl DepGraph {
     pub fn retire_task(&mut self, task: usize) {
         // # Read deps
         // Trigger changes to depending tasks
-        if let Some(read_deps) = self.read_deps_per_task.get(task) {
+        if let Some(read_deps) = self.read_deps_per_task.get(&task) {
             for r_dep in read_deps {
                 if let Some(war_dependent_task) = self.writer_task_per_dep.get(&r_dep) {
-                    let counter = self.dep_counter_per_task.get_mut(*war_dependent_task).unwrap();
+                    let counter = self.dep_counter_per_task.get_mut(war_dependent_task).unwrap();
                     *counter -= 1;
                 }
 
-                let read_set = self.reader_tasks_per_dep.get_mut(&r_dep).unwrap();
-
-                read_set.remove(&task);
+                if let Some(read_set) = self.reader_tasks_per_dep.get_mut(&r_dep) {
+                    read_set.remove(&task);
+                }
             }
         }
         // Clear task read deps
@@ -3306,17 +3355,17 @@ impl DepGraph {
         // replacing it with an empty one, since the latter
         // would trigger memory allocation.
         
-        if let Some(read_deps) = self.read_deps_per_task.get_mut(task) {
+        if let Some(read_deps) = self.read_deps_per_task.get_mut(&task) {
             read_deps.clear();
         }
 
         // # Write deps
         // Trigger changes to depending tasks
-        if let Some(write_deps) = self.write_deps_per_task.get(task) {
+        if let Some(write_deps) = self.write_deps_per_task.get(&task) {
             for w_dep in write_deps {
                 if let Some(waw_dependent_task) = self.writer_task_per_dep.get(&w_dep) {
                     if *waw_dependent_task != task {
-                        let counter = self.dep_counter_per_task.get_mut(*waw_dependent_task).unwrap();
+                        let counter = self.dep_counter_per_task.get_mut(waw_dependent_task).unwrap();
                         *counter -= 1;
                     } else {
                         self.writer_task_per_dep.remove(&w_dep);
@@ -3325,7 +3374,7 @@ impl DepGraph {
 
                 if let Some(raw_dependent_tasks) = self.reader_tasks_per_dep.get(&w_dep) {
                     for raw_dependent_task in raw_dependent_tasks {
-                        let counter = self.dep_counter_per_task.get_mut(*raw_dependent_task).unwrap();
+                        let counter = self.dep_counter_per_task.get_mut(raw_dependent_task).unwrap();
                         *counter -= 1;
                     }
                 }
@@ -3349,6 +3398,7 @@ impl DepGraph {
         self.task_dependency_graph.clear();
         self.ready_tasks.clear();
         self.dep_counter_per_task.clear();
+        //self.parents_per_task.clear();
     }
 
     pub fn visualize_graph(&self, output_name: Option<String>) {
@@ -3360,6 +3410,7 @@ static mut N6_DEP_GRAPH: Option<DepGraph> = None;
 static mut TASK_COUNTER: usize = 0;
 static mut INITIALIZED: bool = false;
 static mut FINISHED_PARENT_TASK: bool = false;
+const CYCLE_LENGTH: usize = 256;
 
 #[no_mangle]
 pub fn hello_partior() {
@@ -3426,8 +3477,9 @@ pub fn cb_finish_adding_task() {
             dep_graph.finish_adding_task(TASK_COUNTER);
 
             TASK_COUNTER += 1;
-            if TASK_COUNTER == 4 {
-                N6_DEP_GRAPH.as_ref().unwrap().visualize_graph(Some("first_256_tasks".to_string()));
+            if TASK_COUNTER > 0 && (TASK_COUNTER % CYCLE_LENGTH) == 0 {
+                N6_DEP_GRAPH.as_ref().unwrap().visualize_graph(Some(format!("{CYCLE_LENGTH}_tasks_up_to{TASK_COUNTER}").to_string()));
+                dep_graph.clear();
             }
         } else {
             FINISHED_PARENT_TASK = true;
