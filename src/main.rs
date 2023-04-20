@@ -3,9 +3,12 @@ use rand::Rng;
 use std::time::Instant;
 use std::num::NonZeroU32;
 use permutation_iterator::Permutor;
+use std::arch::asm;
+
+const ADJ_MATRIX_DEP_SOLVING: bool = false;
 
 fn test_task_dependency_graph_generation() {
-    let mut dep_graph = DepGraph::new();
+    let mut dep_graph = DepGraph::new(ADJ_MATRIX_DEP_SOLVING);
     let mut rng = rand::thread_rng();
 
     const MAX_OUT_DEPS_PER_TASK: usize = 4;
@@ -300,7 +303,7 @@ fn test_sampling_no_vec() {
 }
 
 fn test_task_dependency_graph_generation_and_retirement() {
-    let mut dep_graph = DepGraph::new();
+    let mut dep_graph = DepGraph::new(ADJ_MATRIX_DEP_SOLVING);
     let mut rng = rand::thread_rng();
 
     const MAX_OUT_DEPS_PER_TASK: usize = 4;
@@ -308,30 +311,26 @@ fn test_task_dependency_graph_generation_and_retirement() {
     const ADDRESS_SPACE_SIZE: usize = 20;
     const NUM_TASKS: usize = 100000;
 
+    let mut write_deps: Vec<Vec<usize>> = vec![];
+    let mut read_deps: Vec<Vec<usize>> = vec![];
+
     let mut read_dep_arr: [usize; MAX_IN_DEPS_PER_TASK] = [0; MAX_IN_DEPS_PER_TASK];
-    let mut write_dep_arr: [usize; MAX_OUT_DEPS_PER_TASK] = [0; MAX_OUT_DEPS_PER_TASK];
+    let write_dep_arr: [usize; MAX_OUT_DEPS_PER_TASK] = [0; MAX_OUT_DEPS_PER_TASK];
     let mut num_read_deps = 0;
-    let mut num_write_deps = 0;
 
-    let time_gen = Instant::now();
-    for i in 0..NUM_TASKS {
-        dep_graph.add_task(i);
-
+    for _ in 0..NUM_TASKS {
         let num_out_deps = rng.gen_range(0..=MAX_OUT_DEPS_PER_TASK);
         let num_in_deps = rng.gen_range(0..=MAX_IN_DEPS_PER_TASK);
 
+        let mut task_read_deps: Vec<usize> = vec![];
+        let mut task_write_deps: Vec<usize> = vec![];
+
         for _ in 0..num_out_deps {
             let addr = rng.gen_range(0..ADDRESS_SPACE_SIZE);
-
-            if write_dep_arr.iter().position(|x| *x == addr).is_none() {
-                write_dep_arr[num_write_deps] = addr;
-                num_write_deps += 1;
-            }
+            task_write_deps.push(addr);
         }
 
-        for k in 0..num_write_deps {
-            dep_graph.add_task_write_dep(i, write_dep_arr[k]);
-        }
+        write_deps.push(task_write_deps);
 
         for _ in 0..num_in_deps {
             let addr = rng.gen_range(0..ADDRESS_SPACE_SIZE);
@@ -339,19 +338,29 @@ fn test_task_dependency_graph_generation_and_retirement() {
             // We need having two array searches here ensures that
             // no addr is both an IN and an OUT dependence
             if read_dep_arr.iter().position(|x| *x == addr).is_none() && write_dep_arr.iter().position(|x| *x == addr).is_none(){
+                task_read_deps.push(addr);
                 read_dep_arr[num_read_deps] = addr;
                 num_read_deps += 1;
             }
         }
 
-        for k in 0..num_read_deps {
-            dep_graph.add_task_read_dep(i, read_dep_arr[k]);
+        read_deps.push(task_read_deps);
+        num_read_deps = 0;
+    }
+
+    let time_gen = Instant::now();
+    for i in 0..NUM_TASKS {
+        dep_graph.add_task(i);
+
+        for out_dep in write_deps.get(i).unwrap() {
+            dep_graph.add_task_write_dep(i, *out_dep);
+        }
+
+        for in_dep in read_deps.get(i).unwrap() {
+            dep_graph.add_task_read_dep(i, *in_dep);
         }
 
         dep_graph.finish_adding_task(i);
-
-        num_read_deps = 0;
-        num_write_deps = 0;
     }
     let time_gen = time_gen.elapsed();
     println!("Time to generate random graph: {:?}", time_gen);
@@ -372,9 +381,20 @@ fn test_task_dependency_graph_generation_and_retirement() {
     //dep_graph.visualize_graph(Some(format!("task_dependency_graph")));
 }
 
+fn empty_func() {
+    //println!("derp");
+    unsafe {
+        asm!(
+            "nop"
+        );
+    }
+}
+
 fn test_task_dependency_graph_generation_and_retirement_parametrized(chain: bool, num_deps: usize) {
-    let mut dep_graph = DepGraph::new();
+    let mut dep_graph = DepGraph::new(ADJ_MATRIX_DEP_SOLVING);
     let mut rng = rand::thread_rng();
+
+    let mut func_arr = [&empty_func];
 
     const NUM_TASKS: usize = 100000;
 
@@ -401,6 +421,7 @@ fn test_task_dependency_graph_generation_and_retirement_parametrized(chain: bool
     while dep_graph.num_ready_tasks() > 0 {
         //println!("Number of ready tasks: {}", dep_graph.num_ready_tasks());
         let task = dep_graph.pop_ready_task().unwrap();
+        func_arr[0]();
         dep_graph.retire_task(task);
     }
     let time_ret = time_ret.elapsed();

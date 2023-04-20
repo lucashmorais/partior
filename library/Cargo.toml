@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 csv = "1.1.6"
+fasthash = "0.4.0"
 metaheuristics-nature = { version = "8.0.4", features = ["rayon"] }
 #metaheuristics-nature = { version = "8.0.4" }
 num = "0.4.0"
@@ -15,6 +16,7 @@ once_cell = "1.17.1"
 petgraph = "0.6.2"
 rand = "0.8.5"
 rs-graph = "0.20.1"
+rustc-hash = "1.1.0"
 scan_fmt = "0.2.6"
 statrs = "0.16.0"
 
@@ -22,3 +24,4 @@ statrs = "0.16.0"
 name = "partior"
 path = "src/lib.rs"
 crate-type = ["dylib"]
+#crate-type = ["rlib"]

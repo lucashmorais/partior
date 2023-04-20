@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet, BTreeMap};
 use csv::Writer;
 use std::time::{Duration, Instant};
 use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
@@ -3143,8 +3144,8 @@ pub fn test_max_flow_clustering() {
 }
 
 pub struct DepGraph {
-    writer_task_per_dep: HashMap<usize, usize>,
-    reader_tasks_per_dep: HashMap<usize, HashSet<usize>>,
+    writer_task_per_dep: FxHashMap<usize, usize>,
+    reader_tasks_per_dep: FxHashMap<usize, FxHashSet<usize>>,
 
     // TODO-PERFORMANCE
     // If we really wanted to extract as much performance
@@ -3155,7 +3156,8 @@ pub struct DepGraph {
     read_deps_per_task: Vec<Vec<usize>>,
     task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>,
     ready_tasks: Vec<usize>,
-    dep_counter_per_task: Vec<usize>
+    dep_counter_per_task: Vec<usize>,
+    use_adj_matrix: bool,
 }
 
 // TODO: Add checks for ensuring that we
@@ -3164,15 +3166,17 @@ pub struct DepGraph {
 const MAX_NUM_TASKS: usize = 100000;
 
 impl DepGraph {
-    pub fn new() -> Self {
+    pub fn new(use_matrix: bool) -> Self {
+
         let mut obj = Self {
-            writer_task_per_dep: HashMap::new(),
-            reader_tasks_per_dep: HashMap::new(),
+            writer_task_per_dep: FxHashMap::default(),
+            reader_tasks_per_dep: FxHashMap::default(),
             write_deps_per_task: Vec::with_capacity(MAX_NUM_TASKS),
             read_deps_per_task: Vec::with_capacity(MAX_NUM_TASKS),
             task_dependency_graph: GraphMap::<NodeInfo, usize, Directed>::new(),
             ready_tasks: vec![],
-            dep_counter_per_task: vec![0; MAX_NUM_TASKS]
+            dep_counter_per_task: vec![0; MAX_NUM_TASKS],
+            use_adj_matrix: use_matrix
         };
 
         for _ in 0..MAX_NUM_TASKS {
@@ -3192,15 +3196,20 @@ impl DepGraph {
         // the closure is not idempotent
         // https://doc.rust-lang.org/std/ops/trait.FnMut.html
         let mut make_descendant_of_task = |dep_holder_task: usize| {
-            let dep_holder_task = NodeInfo::new(dep_holder_task);
-            let task = NodeInfo::new(task);
+            let counter = self.dep_counter_per_task.get_mut(task).unwrap();
+            *counter += 1;
 
-            let old_w = self.task_dependency_graph.edge_weight(dep_holder_task, task);
+            if self.use_adj_matrix {
+                let dep_holder_task = NodeInfo::new(dep_holder_task);
+                let task = NodeInfo::new(task);
 
-            if let Some(old_w) = old_w {
-                self.task_dependency_graph.add_edge(dep_holder_task, task, *old_w + 1);
-            } else {
-                self.task_dependency_graph.add_edge(dep_holder_task, task, 1);
+                let old_w = self.task_dependency_graph.edge_weight(dep_holder_task, task);
+
+                if let Some(old_w) = old_w {
+                    self.task_dependency_graph.add_edge(dep_holder_task, task, *old_w + 1);
+                } else {
+                    self.task_dependency_graph.add_edge(dep_holder_task, task, 1);
+                }
             }
         };
 
@@ -3214,10 +3223,14 @@ impl DepGraph {
             assert!(self.reader_tasks_per_dep.get_mut(&dep).unwrap().is_empty(), "reader_task_vec was not cleared");
         }
 
+        let writer_task = self.writer_task_per_dep.get_mut(&dep);
 
-        if let Some(writer_task) = self.writer_task_per_dep.get_mut(&dep) {
+        if writer_task.is_some() {
+            let writer_task = writer_task.unwrap();
             make_descendant_of_task(*writer_task);
             *writer_task = task;
+        } else {
+            self.writer_task_per_dep.insert(dep, task);
         }
     }
 
@@ -3229,15 +3242,20 @@ impl DepGraph {
         deps_vec.push(dep);
 
         if let Some(owner_task) = self.writer_task_per_dep.get(&dep) {
-            let owner_task = NodeInfo::new(*owner_task);
-            let task = NodeInfo::new(task);
+            let counter = self.dep_counter_per_task.get_mut(task).unwrap();
+            *counter += 1;
 
-            let old_w = self.task_dependency_graph.edge_weight(owner_task, task);
+            if self.use_adj_matrix {
+                let owner_task = NodeInfo::new(*owner_task);
+                let task = NodeInfo::new(task);
 
-            if let Some(old_w) = old_w {
-                self.task_dependency_graph.add_edge(owner_task, task, *old_w + 1);
-            } else {
-                self.task_dependency_graph.add_edge(owner_task, task, 1);
+                let old_w = self.task_dependency_graph.edge_weight(owner_task, task);
+
+                if let Some(old_w) = old_w {
+                    self.task_dependency_graph.add_edge(owner_task, task, *old_w + 1);
+                } else {
+                    self.task_dependency_graph.add_edge(owner_task, task, 1);
+                }
             }
         }
 
@@ -3247,18 +3265,19 @@ impl DepGraph {
             let reader_tasks_set = reader_tasks_set.unwrap();
             reader_tasks_set.insert(task);
         } else {
-            // TODO: PERFORMANCE
-            //       Try improving performance by using
-            //       a fast custom hash function.
-            let reader_tasks_set = HashSet::with_capacity(7);
+            let mut reader_tasks_set = FxHashSet::default();
+            //println!("reader_tasks_set capacity: {}", reader_tasks_set.capacity());
+            reader_tasks_set.reserve(7);
             //println!("reader_tasks_set capacity: {}", reader_tasks_set.capacity());
             self.reader_tasks_per_dep.insert(dep, reader_tasks_set);
         }
     }
 
     pub fn add_task(&mut self, task: usize) {
-        let task = NodeInfo::new(task);
-        self.task_dependency_graph.add_node(task);
+        if self.use_adj_matrix {
+            let task = NodeInfo::new(task);
+            self.task_dependency_graph.add_node(task);
+        }
     }
 
     pub fn finish_adding_task(&mut self, task: usize) {
@@ -3329,12 +3348,18 @@ impl DepGraph {
         self.read_deps_per_task.clear();
         self.task_dependency_graph.clear();
         self.ready_tasks.clear();
+        self.dep_counter_per_task.clear();
     }
 
     pub fn visualize_graph(&self, output_name: Option<String>) {
         visualize_graph(&self.task_dependency_graph.clone().into_graph(), None, output_name);
     }
 }
+
+static mut N6_DEP_GRAPH: Option<DepGraph> = None;
+static mut TASK_COUNTER: usize = 0;
+static mut INITIALIZED: bool = false;
+static mut FINISHED_PARENT_TASK: bool = false;
 
 #[no_mangle]
 pub fn hello_partior() {
@@ -3343,12 +3368,29 @@ pub fn hello_partior() {
 
 #[no_mangle]
 pub fn cb_initialize_partior() {
-    println!("[partior::cb_initialize_partior]: Hello from the other side!");
+    println!("[partior::cb_initialize_partior]");
+
+    unsafe {
+        N6_DEP_GRAPH = Some(DepGraph::new(true));
+        INITIALIZED = true;
+    }
 }
 
 #[no_mangle]
 pub fn cb_add_task() {
     println!("[partior::cb_add_task]: Hello from the other side!");
+
+    unsafe {
+        if !INITIALIZED {
+            N6_DEP_GRAPH = Some(DepGraph::new(true));
+            INITIALIZED = true;
+
+            // We do not add the first task, which
+            // is merely the main parent task
+        } else {
+            N6_DEP_GRAPH.as_mut().unwrap().add_task(TASK_COUNTER);
+        }
+    }
 }
 
 #[no_mangle]
@@ -3357,11 +3399,38 @@ pub fn cb_remove_task() {
 }
 
 #[no_mangle]
-pub fn cb_add_dep() {
-    println!("[partior::cb_add_dep]: Hello from the other side!");
+pub fn cb_add_dep(dep_type: u64, address: u64) {
+    println!("[partior::cb_add_dep]: (dep_type, address) = ({}, {})", dep_type, address);
+    unsafe {
+        let dep_graph = N6_DEP_GRAPH.as_mut().unwrap();
+        if dep_type == 1 {
+            dep_graph.add_task_read_dep(TASK_COUNTER, address as usize);
+        } else {
+            println!("[partior::cb_add_dep]: Adding write dep = {}", address);
+            dep_graph.add_task_write_dep(TASK_COUNTER, address as usize);
+        }
+    }
 }
 
 #[no_mangle]
 pub fn cb_allocation_hint() {
     println!("[partior::cb_allocation_hint]: Hello from the other side!");
+}
+
+#[no_mangle]
+pub fn cb_finish_adding_task() {
+    println!("[partior::cb_allocation_hint]: Hello from the other side!");
+    unsafe {
+        if FINISHED_PARENT_TASK {
+            let dep_graph = N6_DEP_GRAPH.as_mut().unwrap();
+            dep_graph.finish_adding_task(TASK_COUNTER);
+
+            TASK_COUNTER += 1;
+            if TASK_COUNTER == 4 {
+                N6_DEP_GRAPH.as_ref().unwrap().visualize_graph(Some("first_256_tasks".to_string()));
+            }
+        } else {
+            FINISHED_PARENT_TASK = true;
+        }
+    }
 }
