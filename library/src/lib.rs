@@ -33,7 +33,7 @@ use scan_fmt::*;
 mod dinic_maxflow;
 
 const PRINT_WEIGHTS: bool = false;
-const MAX_NUMBER_OF_PARTITIONS: usize = 40;
+const MAX_NUMBER_OF_PARTITIONS: usize = 4;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
 const MAX_NUMBER_OF_NODES: usize = 257;
 //const MAX_BINOMIAL_A: usize = 550000;
@@ -2284,12 +2284,12 @@ fn local_search_permanence(graph: &Graph<NodeInfo, usize, Directed, usize>) -> V
 
 fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
     let mut unwrapped_pid_array: Vec<usize> = vec![];
-    pid_array.into_iter().for_each(|x| unwrapped_pid_array.push(x.unwrap()));
+    pid_array.into_iter().for_each(|x| unwrapped_pid_array.push(x.unwrap_or(0)));
 
     unwrapped_pid_array
 }
 
-fn test_multi_level_clustering(use_flattened_graph: bool) {
+pub fn test_multi_level_clustering(use_flattened_graph: bool) {
     let num_nodes = 64;
     let num_edges = 192;
     //let mixing_coeff = 0.003;
@@ -3368,6 +3368,89 @@ impl DepGraph {
         }
     }
 
+    fn run_clustering(&self) {
+        const POP_SIZE: usize = 32;
+
+        let num_communities = 4;
+        let num_flattening_passes = 2;
+        let use_flattened_graph = true;
+        let num_generations = 12000;
+
+        let original_g = self.task_dependency_graph.clone().into_graph();
+
+        let g = if use_flattened_graph {
+            multi_pass_tree_transform(&original_g, 2, false)
+        } else {
+            original_g.clone()
+        };
+
+        const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
+
+        let mut best_surprise_per_algo = HashMap::new();
+
+        let mut _f = File::create(TEMP_FILE_NAME).unwrap();
+        //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
+        
+        let start = Instant::now();
+        let (pid_array, partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
+        println!("Full multi-level solver elapsed time: {:?}", start.elapsed());
+
+        let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, true);
+        let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+        let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+        println!("Immediate succesor info: {:?}", immediate_successor_execution_info);
+        println!("Immediate succesor permanence: {:?}", ims_permanence);
+        println!("Immediate succesor surprise: {:?}", ims_surprise);
+
+        let num_gen = 0;
+
+        let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
+        let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+        let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+
+        _f.write(format!("Immediate successor,{},{},fitness_test,{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, CYCLE_LENGTH, num_communities, ims_permanence).as_bytes()).unwrap();
+
+        let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
+        if immediate_successor_execution_info.speedup > algo_best {
+            visualize_graph(&original_g, Some(&immediate_successor_finalized_placements), Some(format!("immediate_successor_{}", immediate_successor_execution_info.speedup)));
+            best_surprise_per_algo.insert("Random Immediate Successor", immediate_successor_execution_info.speedup);
+        }
+
+        let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, false);
+        let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+        let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
+        println!("Multi-level solver info: {:?}", execution_info);
+        println!("Multi-level solver permanence: {:?}", permanence);
+        println!("Multi-level solver surprise: {:?}", surprise);
+
+        let algo_best = *best_surprise_per_algo.entry("Multi-level differential evolution").or_insert(f64::MIN);
+        if execution_info.speedup > algo_best {
+            visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_{}", execution_info.speedup)));
+            best_surprise_per_algo.insert("Multi-level differential evolution", execution_info.speedup);
+        }
+
+        let start = Instant::now();
+        let tree_g = multi_pass_tree_transform(&original_g, num_flattening_passes, false);
+        println!("Time for applying tree transformation {} times: {:?}", num_flattening_passes, start.elapsed());
+
+        let start = Instant::now();
+        let (tree_pid_array, tree_partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &tree_g, None);
+        println!("Full multi-level tree solver elapsed time: {:?}", start.elapsed());
+
+        let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&tree_pid_array), num_generations, false);
+        let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+        let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
+        println!("Multi-level tree solver info: {:?}", execution_info);
+        println!("Multi-level tree solver permanence: {:?}", permanence);
+        println!("Multi-level tree solver surprise: {:?}", surprise);
+
+        let algo_best = *best_surprise_per_algo.entry("Multi-level tree differential evolution").or_insert(f64::MIN);
+        if execution_info.speedup > algo_best {
+            visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_tree_{}", execution_info.speedup)));
+            best_surprise_per_algo.insert("Multi-level tree differential evolution", execution_info.speedup);
+        }
+    }
+
     pub fn pop_ready_task(&mut self) -> Option<usize> {
         self.ready_tasks.pop()
     }
@@ -3395,7 +3478,7 @@ static mut N6_DEP_GRAPH: Option<DepGraph> = None;
 static mut TASK_COUNTER: usize = 0;
 static mut INITIALIZED: bool = false;
 static mut FINISHED_PARENT_TASK: bool = false;
-const CYCLE_LENGTH: usize = 256;
+const CYCLE_LENGTH: usize = 128;
 
 #[no_mangle]
 pub fn hello_partior() {
@@ -3464,6 +3547,7 @@ pub fn cb_finish_adding_task() {
             TASK_COUNTER += 1;
             if TASK_COUNTER > 0 && (TASK_COUNTER % CYCLE_LENGTH) == 0 {
                 N6_DEP_GRAPH.as_ref().unwrap().visualize_graph(Some(format!("{CYCLE_LENGTH}_tasks_up_to{TASK_COUNTER}").to_string()));
+                dep_graph.run_clustering();
                 dep_graph.clear();
             }
         } else {
