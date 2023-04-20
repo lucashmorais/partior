@@ -3143,6 +3143,11 @@ pub fn test_max_flow_clustering() {
     //text_export_graph(&generate_max_flow_clustering_graph(&graph, 1, Some(5)));
 }
 
+// TODO-PERFORMANCE
+// Let DepGraph be setup in a way that is optimized
+// for contiguous task IDs, which reduce the need
+// for hash-based data structures.
+// Take benefit of the commented code for that.
 pub struct DepGraph {
     writer_task_per_dep: FxHashMap<usize, usize>,
     reader_tasks_per_dep: FxHashMap<usize, FxHashSet<usize>>,
@@ -3160,7 +3165,6 @@ pub struct DepGraph {
     ready_tasks: Vec<usize>,
     dep_counter_per_task: FxHashMap<usize, usize>,
     use_adj_matrix: bool,
-    //parents_per_task: FxHashMap<usize, FxHashSet<usize>>
 }
 
 // TODO: Add checks for ensuring that we
@@ -3183,7 +3187,6 @@ impl DepGraph {
             //dep_counter_per_task: vec![0; MAX_NUM_TASKS],
             dep_counter_per_task: FxHashMap::default(),
             use_adj_matrix: use_matrix,
-            //parents_per_task: FxHashMap::default()
         };
 
         /*
@@ -3212,9 +3215,6 @@ impl DepGraph {
         // the closure is not idempotent
         // https://doc.rust-lang.org/std/ops/trait.FnMut.html
         let mut make_descendant_of_task = |dep_holder_task: usize| {
-            // TODO-STABILITY: We might need to ensure that this counter
-            //                 is only increased once for each (parent, son)
-            //                 relationship.
             if let Some(counter) = self.dep_counter_per_task.get_mut(&task) {
                 *counter += 1;
             } else {
@@ -3232,18 +3232,6 @@ impl DepGraph {
                 } else {
                     self.task_dependency_graph.add_edge(dep_holder_task, task, 1);
                 }
-            } else {
-                /*
-                if let Some(parents_set) = self.parents_per_task.get_mut(&task) {
-                    if !parents_set.contains(&dep_holder_task) {
-                        parents_set.insert(dep_holder_task);
-                    }
-                } else {
-                    let mut set = FxHashSet::default();
-                    set.insert(dep_holder_task);
-                    self.parents_per_task.insert(task, set);
-                }
-                */
             }
         };
 
@@ -3310,9 +3298,7 @@ impl DepGraph {
             reader_tasks_set.insert(task);
         } else {
             let mut reader_tasks_set = FxHashSet::default();
-            //println!("reader_tasks_set capacity: {}", reader_tasks_set.capacity());
             reader_tasks_set.reserve(7);
-            //println!("reader_tasks_set capacity: {}", reader_tasks_set.capacity());
             self.reader_tasks_per_dep.insert(dep, reader_tasks_set);
         }
     }
@@ -3350,7 +3336,7 @@ impl DepGraph {
                 }
             }
         }
-        // Clear task read deps
+        // # Clear task read deps
         // Clearing the existing vector might be faster than
         // replacing it with an empty one, since the latter
         // would trigger memory allocation.
@@ -3398,7 +3384,6 @@ impl DepGraph {
         self.task_dependency_graph.clear();
         self.ready_tasks.clear();
         self.dep_counter_per_task.clear();
-        //self.parents_per_task.clear();
     }
 
     pub fn visualize_graph(&self, output_name: Option<String>) {
