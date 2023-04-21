@@ -3165,6 +3165,8 @@ pub struct DepGraph {
     ready_tasks: Vec<usize>,
     dep_counter_per_task: FxHashMap<usize, usize>,
     use_adj_matrix: bool,
+    task_id_per_addr: FxHashMap<usize, usize>,
+    clustering_info: Vec<usize>
 }
 
 // TODO: Add checks for ensuring that we
@@ -3187,6 +3189,8 @@ impl DepGraph {
             //dep_counter_per_task: vec![0; MAX_NUM_TASKS],
             dep_counter_per_task: FxHashMap::default(),
             use_adj_matrix: use_matrix,
+            task_id_per_addr: FxHashMap::default(),
+            clustering_info: vec![],
         };
 
         /*
@@ -3368,7 +3372,7 @@ impl DepGraph {
         }
     }
 
-    fn run_clustering(&self) {
+    fn run_clustering(&mut self) {
         const POP_SIZE: usize = 32;
 
         let num_communities = 4;
@@ -3392,8 +3396,12 @@ impl DepGraph {
         //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
         
         let start = Instant::now();
-        let (pid_array, partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
+        let (pid_array, _) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
         println!("Full multi-level solver elapsed time: {:?}", start.elapsed());
+        visualize_graph(&original_g, Some(&pid_array), Some(format!("pre_execution_multi_level_solution")));
+
+        // Storing clustering info as a DepGraph field
+        self.clustering_info = unwrap_pid_array(&pid_array);
 
         let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, true);
         let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
@@ -3434,8 +3442,9 @@ impl DepGraph {
         println!("Time for applying tree transformation {} times: {:?}", num_flattening_passes, start.elapsed());
 
         let start = Instant::now();
-        let (tree_pid_array, tree_partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &tree_g, None);
+        let (tree_pid_array, _) = split_solve_merge(POP_SIZE, num_generations, num_communities, &tree_g, None);
         println!("Full multi-level tree solver elapsed time: {:?}", start.elapsed());
+        visualize_graph(&original_g, Some(&pid_array), Some(format!("pre_execution_tree_like_multi_level_solution")));
 
         let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&tree_pid_array), num_generations, false);
         let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
@@ -3478,7 +3487,7 @@ static mut N6_DEP_GRAPH: Option<DepGraph> = None;
 static mut TASK_COUNTER: usize = 0;
 static mut INITIALIZED: bool = false;
 static mut FINISHED_PARENT_TASK: bool = false;
-const CYCLE_LENGTH: usize = 128;
+const CYCLE_LENGTH: usize = 256;
 
 #[no_mangle]
 pub fn hello_partior() {
@@ -3537,12 +3546,14 @@ pub fn cb_allocation_hint() {
 }
 
 #[no_mangle]
-pub fn cb_finish_adding_task() {
+pub fn cb_finish_adding_task(task_addr: usize) {
     println!("[partior::cb_allocation_hint]: Hello from the other side!");
     unsafe {
         if FINISHED_PARENT_TASK {
             let dep_graph = N6_DEP_GRAPH.as_mut().unwrap();
             dep_graph.finish_adding_task(TASK_COUNTER);
+
+            dep_graph.task_id_per_addr.insert(task_addr, TASK_COUNTER);
 
             TASK_COUNTER += 1;
             if TASK_COUNTER > 0 && (TASK_COUNTER % CYCLE_LENGTH) == 0 {
