@@ -32,7 +32,7 @@ use scan_fmt::*;
 mod dinic_maxflow;
 
 const PRINT_WEIGHTS: bool = false;
-const MAX_NUMBER_OF_PARTITIONS: usize = 40;
+const MAX_NUMBER_OF_PARTITIONS: usize = 8;
 const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
 const MAX_NUMBER_OF_NODES: usize = 257;
 //const MAX_BINOMIAL_A: usize = 550000;
@@ -2283,16 +2283,37 @@ fn local_search_permanence(graph: &Graph<NodeInfo, usize, Directed, usize>) -> V
 
 fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
     let mut unwrapped_pid_array: Vec<usize> = vec![];
-    pid_array.into_iter().for_each(|x| unwrapped_pid_array.push(x.unwrap()));
+    //pid_array.into_iter().for_each(|x| unwrapped_pid_array.push(x.unwrap()));
+    pid_array.into_iter().for_each(|x| if x.is_some() {unwrapped_pid_array.push(x.unwrap())});
 
     unwrapped_pid_array
 }
 
-fn test_multi_level_clustering(use_flattened_graph: bool) {
+pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_edges_f: f64, max_edges_f: f64, min_communities: usize, max_communities: usize, min_mixing_coef: f64, max_mixing_coef: f64) {
+    let num_edges = 192;
+    let num_gen_communities = 8;
+    let num_communities = 8;
+    let max_comm_size_difference = 8;
+    let num_flattening_passes = 2;
+
+    for n in 0..30 {
+        let mut rng = rand::thread_rng();
+        let mixing_coeff: f64 = rng.gen_range(min_mixing_coef..max_mixing_coef);
+        let num_nodes: usize = rng.gen_range(min_nodes..max_nodes+1);
+
+        let original_g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
+        println!("Finished generating random graph.");
+
+        visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some(format!("ground_truth_flattened_{n}_mc{mixing_coeff}").to_string()));
+        visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}").to_string()));
+    }
+}
+
+pub fn test_multi_level_clustering(use_flattened_graph: bool) {
     let num_nodes = 64;
     let num_edges = 192;
-    //let mixing_coeff = 0.003;
-    let mixing_coeff = 0.000;
+    let mixing_coeff = 0.003;
+    //let mixing_coeff = 0.000;
     let num_gen_communities = 8;
     let num_communities = 8;
     let max_comm_size_difference = 0;
@@ -2315,7 +2336,7 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
     const POP_SIZE: usize = 32;
 
-    let num_gen_options = [12000];
+    let num_gen_options = [6000];
     for num_generations in num_gen_options {
         for solver_iter in 0..NUM_SOLVER_EVALUATIONS {
             println!("\n\nSolver iteration: {}", solver_iter);
@@ -2324,7 +2345,9 @@ fn test_multi_level_clustering(use_flattened_graph: bool) {
             let (pid_array, partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
             println!("Full multi-level solver elapsed time: {:?}", start.elapsed());
 
+            println!("pid_array: {:?}", pid_array);
             let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, true);
+            println!("Just calculated immediate successor info");
             let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
             let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
             println!("Immediate succesor info: {:?}", immediate_successor_execution_info);

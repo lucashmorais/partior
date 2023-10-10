@@ -420,7 +420,8 @@ fn main() {
     //test_metaheuristics_03(10);
     //test_tree_transform();
     //test_n_tree_transform();
-    //test_multi_level_clustering(false);
+    //test_multi_level_clustering(false); // 2023-10
+    test_gen_multiple_ground_truths(64, 128, 0.0, 1.0, 1, 8, 0.0, 0.03);
     //test_local_surprise_search();
     //test_local_permanence_search();
     //test_dinitz_max_flow();
@@ -431,9 +432,10 @@ fn main() {
     //hello_partior();
     //test_max_flow_clustering();
     
+    // Dependency resolution tests
     //test_task_dependency_graph_generation();
-    test_task_dependency_graph_generation_and_retirement();
     //test_task_dependency_graph_generation_and_retirement_parametrized(true, 15);
+    //test_task_dependency_graph_generation_and_retirement();
 
     //test_hashed_permutation();
     
