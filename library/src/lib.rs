@@ -2292,7 +2292,6 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
 pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_edges_f: f64, max_edges_f: f64, min_communities: usize, max_communities: usize, min_mixing_coef: f64, max_mixing_coef: f64) {
     let num_edges = 192;
     let num_gen_communities = 8;
-    let num_communities = 8;
     let max_comm_size_difference = 8;
     let num_flattening_passes = 2;
 
@@ -2300,6 +2299,7 @@ pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_e
         let mut rng = rand::thread_rng();
         let mixing_coeff: f64 = rng.gen_range(min_mixing_coef..max_mixing_coef);
         let num_nodes: usize = rng.gen_range(min_nodes..max_nodes+1);
+        let num_gen_communities: usize = rng.gen_range(min_communities..max_communities+1);
 
         let original_g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
         println!("Finished generating random graph.");
