@@ -2290,9 +2290,7 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
 }
 
 pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_edges_f: f64, max_edges_f: f64, min_communities: usize, max_communities: usize, min_mixing_coef: f64, max_mixing_coef: f64) {
-    let num_edges = 192;
-    let num_gen_communities = 8;
-    let max_comm_size_difference = 8;
+    let max_comm_size_difference = 1;
     let num_flattening_passes = 2;
 
     for n in 0..30 {
@@ -2300,12 +2298,19 @@ pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_e
         let mixing_coeff: f64 = rng.gen_range(min_mixing_coef..max_mixing_coef);
         let num_nodes: usize = rng.gen_range(min_nodes..max_nodes+1);
         let num_gen_communities: usize = rng.gen_range(min_communities..max_communities+1);
+        let edges_f: f64 = rng.gen_range(min_edges_f..max_edges_f);
 
-        let original_g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
+        let num_larger_communities: usize = num_nodes % num_gen_communities;
+        let base_community_size: usize = num_nodes / num_gen_communities;
+        let max_edges: usize = num_gen_communities * base_community_size * (base_community_size - 1) / 2 + num_larger_communities * base_community_size;
+        let num_edges: usize = (edges_f * (max_edges as f64)).round() as usize;
+
+        println!("Generating graph with (edges_f) = ({edges_f})");
+        let original_g = gen_lfr_like_graph::<Directed>(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
         println!("Finished generating random graph.");
 
         visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some(format!("ground_truth_flattened_{n}_mc{mixing_coeff}").to_string()));
-        visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}").to_string()));
+        //visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}").to_string()));
     }
 }
 
