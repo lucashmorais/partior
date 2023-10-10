@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet, BTreeMap};
 use csv::Writer;
 use std::time::{Duration, Instant};
 use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
+use rayon::prelude::*;
 
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
@@ -2289,11 +2290,42 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
     unwrapped_pid_array
 }
 
+fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>) {
+    let mut s: String = format!("N: {}, E: {}, ", g.node_count(), g.edge_count()).to_owned();
+
+    for e in g.edge_references() {
+        let a = e.source();
+        let b = e.target();
+        let a_id = g.node_weight(a).unwrap().numerical_id;
+        let b_id = g.node_weight(b).unwrap().numerical_id;
+
+        s = format!("{s}({a_id}, {b_id}) ");
+    }
+
+    s = format!("{s}| ");
+
+    for (_, n_info) in g.node_references() {
+        let pid = n_info.partition_id();
+
+        s = format!("{s}{pid}-");
+    }
+
+    s = format!("{s}\n");
+
+    print!("{s}");
+}
+
 pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_edges_f: f64, max_edges_f: f64, min_communities: usize, max_communities: usize, min_mixing_coef: f64, max_mixing_coef: f64) {
     let max_comm_size_difference = 1;
     let num_flattening_passes = 2;
+    let num_iter = 100000;
 
-    for n in 0..30 {
+    let mut iter_vec = Vec::new();
+    for i in 0..num_iter {
+        iter_vec.push(i);
+    }
+
+    iter_vec.par_iter().for_each(|&n| {
         let mut rng = rand::thread_rng();
         let mixing_coeff: f64 = rng.gen_range(min_mixing_coef..max_mixing_coef);
         let num_nodes: usize = rng.gen_range(min_nodes..max_nodes+1);
@@ -2305,13 +2337,15 @@ pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_e
         let max_edges: usize = num_gen_communities * base_community_size * (base_community_size - 1) / 2 + num_larger_communities * base_community_size;
         let num_edges: usize = (edges_f * (max_edges as f64)).round() as usize;
 
-        println!("Generating graph with (edges_f) = ({edges_f})");
+        //println!("Generating graph #{n} with (edges_f) = ({edges_f})");
         let original_g = gen_lfr_like_graph::<Directed>(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
-        println!("Finished generating random graph.");
+        //println!("Finished generating random graph.");
 
-        visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some(format!("ground_truth_flattened_{n}_mc{mixing_coeff}").to_string()));
+        //visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some(format!("ground_truth_flattened_{n}_mc{mixing_coeff}").to_string()));
+        print_serialized_graph(&original_g);
+
         //visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}").to_string()));
-    }
+    });
 }
 
 pub fn test_multi_level_clustering(use_flattened_graph: bool) {

@@ -421,7 +421,7 @@ fn main() {
     //test_tree_transform();
     //test_n_tree_transform();
     //test_multi_level_clustering(false); // 2023-10
-    test_gen_multiple_ground_truths(1, 256, 0.0, 0.45, 1, 8, 0.0, 0.03);
+    test_gen_multiple_ground_truths(1, 128, 0.0, 0.45, 1, 8, 0.0, 0.03);
     //test_local_surprise_search();
     //test_local_permanence_search();
     //test_dinitz_max_flow();
