@@ -2290,7 +2290,7 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
     unwrapped_pid_array
 }
 
-fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>) {
+fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>) -> String {
     let mut s: String = format!("N: {}, E: {}, ", g.node_count(), g.edge_count()).to_owned();
 
     for e in g.edge_references() {
@@ -2310,22 +2310,20 @@ fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>) {
         s = format!("{s}{pid}-");
     }
 
-    s = format!("{s}\n");
-
-    print!("{s}");
+    format!("{s}\n")
 }
 
 pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_edges_f: f64, max_edges_f: f64, min_communities: usize, max_communities: usize, min_mixing_coef: f64, max_mixing_coef: f64) {
     let max_comm_size_difference = 1;
     let num_flattening_passes = 2;
-    let num_iter = 100000;
+    let num_iter = 5000000;
 
     let mut iter_vec = Vec::new();
     for i in 0..num_iter {
         iter_vec.push(i);
     }
 
-    iter_vec.par_iter().for_each(|&n| {
+    let map_result = iter_vec.par_iter().map(|&n| {
         let mut rng = rand::thread_rng();
         let mixing_coeff: f64 = rng.gen_range(min_mixing_coef..max_mixing_coef);
         let num_nodes: usize = rng.gen_range(min_nodes..max_nodes+1);
@@ -2342,10 +2340,15 @@ pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_e
         //println!("Finished generating random graph.");
 
         //visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some(format!("ground_truth_flattened_{n}_mc{mixing_coeff}").to_string()));
-        print_serialized_graph(&original_g);
 
         //visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}").to_string()));
+
+        //return print_serialized_graph(&original_g);
+        return print_serialized_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false));
     });
+
+    let output_string = map_result.reduce(|| format!(""), |str_a, str_b| str_a + str_b.as_str());
+    print!("{output_string}");
 }
 
 pub fn test_multi_level_clustering(use_flattened_graph: bool) {
