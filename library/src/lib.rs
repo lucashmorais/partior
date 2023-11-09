@@ -12,9 +12,11 @@ use petgraph::visit::EdgeRef;
 use std::fs::File;
 use std::io::prelude::*;
 use std::fmt;
+use std::thread;
 use std::process::Command;
-use rand::Rng;
+use rand::{Rng, RngCore, SeedableRng};
 use rand::seq::SliceRandom;
+use rand::rngs::{ThreadRng, StdRng};
 use std::cmp::min;
 use statrs::function::factorial::binomial;
 use std::collections::{HashMap, HashSet, BTreeMap};
@@ -22,6 +24,8 @@ use csv::Writer;
 use std::time::{Duration, Instant};
 use metaheuristics_nature::ndarray::{Array2, ArrayBase, OwnedRepr, Dim};
 use rayon::prelude::*;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use metaheuristics_nature::{Rga, Fa, Pso, De, Tlbo, Solver};
 use metaheuristics_nature::tests::TestObj;
@@ -34,7 +38,8 @@ mod dinic_maxflow;
 
 const PRINT_WEIGHTS: bool = false;
 const MAX_NUMBER_OF_PARTITIONS: usize = 8;
-const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
+//const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
+const KERNEL_NUMBER_OF_PARTITIONS: usize = 8;
 const MAX_NUMBER_OF_NODES: usize = 257;
 //const MAX_BINOMIAL_A: usize = 550000;
 const MAX_BINOMIAL_A: usize = 33000;
@@ -109,12 +114,14 @@ const COLORS: &'static [&'static str] = &["#d9ed92", "#b5e48c", "#99d98c", "#76c
 // it would still hold the ownership of would go out
 // of scope and thus be dropped from memory.
 fn write_to_file(s: &String, output: String) {
-    const TEMP_FILE_NAME: &str = "temp.dot";
-    let mut f = File::create(TEMP_FILE_NAME).unwrap();
+    let thread_id = thread::current().id();
+    let temp_file_name: String = format!("temp_tid_{:?}.dot", thread_id);
+
+    let mut f = File::create(&temp_file_name).unwrap();
     //println!("{}", s);
     f.write(s.as_bytes()).unwrap();
 
-    gen_graph_image(TEMP_FILE_NAME, output);
+    gen_graph_image(temp_file_name, output);
 }
 
 // Create an undirected graph with `i32` nodes and edges with `()` associated data.
@@ -414,6 +421,31 @@ fn expand_compact_pid(compact_pid_array: &[usize], pid_array: &mut [usize]) {
     //println!("{:?}", pid_array);
 }
 
+fn calculate_id_pid_penalty(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: &[usize]) -> usize {
+    let num_nodes = g.node_count();
+
+    let mut min_ids_per_partition = HashMap::new();
+    let mut max_pid = 0;
+
+    for i in (0..num_nodes).rev() {
+        let pid = pid_array[i];
+
+        min_ids_per_partition.insert(pid_array[i], i);        
+
+        if pid > max_pid {
+            max_pid = pid;
+        }
+    }
+    
+    let mut penalty = 0;
+
+    for pid in min_ids_per_partition.keys() {
+        penalty += pid * min_ids_per_partition.get(pid).unwrap();
+    }
+
+    penalty
+}
+
 // Implemented according to the definition found in https://doi.org/10.1371/journal.pone.0024195 .
 // Better clusterings have a lower surprise value.
 fn calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Option<&[usize]>) -> f64 {
@@ -439,6 +471,14 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Op
     //println!("Graph surprise: {}", surprise);
     
     //surprise = surprise + calculate_pid_array_min_max_distance(pid_array, num_nodes) * 10.;
+
+    /*
+        if pid_array.is_some() {
+            let penalty_multiplier = (1.0 + 0.005 * calculate_id_pid_penalty(g, pid_array.unwrap()) as f64);
+            surprise *= penalty_multiplier;
+            //println!("penalty_multiplier: {:.6}", penalty_multiplier);
+        }
+    */
 
     surprise 
 }
@@ -637,7 +677,7 @@ fn gen_speedup_bars(csv_path_with_suffix: &'static str, image_output_without_suf
     let _dot_proc_output = Command::new("src/speedup_graphs.py").arg(csv_path_with_suffix).arg(image_output_without_suffix).output().unwrap();
 }
 
-fn gen_graph_image(file_name: &'static str, output_name: String) {
+fn gen_graph_image(file_name: String, output_name: String) {
     let _dot_proc_output = Command::new("dot").arg("-Tpng").arg(file_name).arg("-o").arg(format!("{output_name}.png")).output().unwrap();
 }
 
@@ -1737,6 +1777,8 @@ fn de_compact_solve<'a>(g: &'a Graph<NodeInfo, usize, Directed, usize>, num_gene
 fn gen_lfr_like_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num_communities: usize, max_comm_size_difference: usize) -> Graph<NodeInfo, usize, T, usize> {
     let mut rng = rand::thread_rng();
 
+    let mixing_coeff = 16 as f64 * mixing_coeff / num_nodes as f64;
+
     let d = max_comm_size_difference;
     let min_l = (num_nodes as f64 / num_communities as f64).ceil() as usize - d;
     let max_l = num_nodes / num_communities;
@@ -1767,6 +1809,11 @@ fn gen_lfr_like_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, mixing_co
     let mut missing_nodes = num_nodes;
     let mut pid_array: Vec<usize> = Vec::with_capacity(num_nodes);
     
+    // This ensures that node 0 always belong to core 0
+    assert!(missing_nodes > 0);
+    pid_array.push(base_pid_array.swap_remove(0));
+    missing_nodes -= 1;
+
     while missing_nodes > 0 {
         let i = rng.gen_range(0..missing_nodes);
         pid_array.push(base_pid_array.swap_remove(i));
@@ -1782,6 +1829,29 @@ fn gen_lfr_like_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, mixing_co
 
     let nodes: Vec<NodeInfo> = g.nodes().collect();
     let mut missing_edges = num_edges;
+
+    // This ensures that node 0 has at least one edge,
+    // to make sure its fixed partition id is useful
+    // to distinguish equivalent clusterings
+    let a = 0;
+
+    while true {
+        let b = rng.gen_range(1..num_nodes);
+
+        // This makes sure that node 0
+        // will always have an edge to
+        // some other node in its own
+        // partition.
+        if pid_array[a] != pid_array[b] {
+            continue;
+        }
+
+        g.add_edge(nodes[a], nodes[b], 1);            
+        break;
+    }
+    missing_edges -= 1;
+
+    let mut inter_cluster_edges = 0;
 
     while missing_edges > 0 {
         let a = rng.gen_range(0..num_nodes - 1);
@@ -1800,10 +1870,135 @@ fn gen_lfr_like_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, mixing_co
         if rng.gen_bool(probability_to_add) {
             g.add_edge(nodes[a], nodes[b], 1);            
             missing_edges -= 1;
+            if pid_array[a] != pid_array[b] {
+                inter_cluster_edges += 1;
+            }
         }
     }
 
     let g: Graph<NodeInfo, usize, T, usize> = g.into_graph();
+    //println!("(Number, fraction) of inter-cluster edges: ({}, {})", inter_cluster_edges, inter_cluster_edges as f64 / num_edges as f64);
+    g
+}
+
+fn gen_random_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, num_bridge_edges: usize, num_communities: usize, max_comm_size_difference: usize) -> Graph<NodeInfo, usize, T, usize> {
+    let mut rng = rand::thread_rng();
+
+    let d = max_comm_size_difference;
+    let min_l = (num_nodes as f64 / num_communities as f64).ceil() as usize - d;
+    let max_l = num_nodes / num_communities;
+    
+    let l = rng.gen_range(min_l..=max_l);
+    let h = l + d;
+    let mut missing_nodes = num_nodes - l * num_communities;
+
+    let mut community_sizes = vec![l; num_communities];
+
+    while missing_nodes > 0 {
+        let r = rng.gen_range(0..num_communities);
+
+        if community_sizes[r] < h {
+            community_sizes[r] += 1;
+            missing_nodes -= 1;
+        }
+    }
+
+    let mut base_pid_array: Vec<usize> = Vec::with_capacity(num_nodes);
+
+    for (i, s) in community_sizes.into_iter().enumerate() {
+        for _ in 0..s {
+            base_pid_array.push(i);
+        }
+    }
+
+    let mut missing_nodes = num_nodes;
+    let mut pid_array: Vec<usize> = Vec::with_capacity(num_nodes);
+    
+    // This ensures that node 0 always belong to core 0
+    assert!(missing_nodes > 0);
+    pid_array.push(base_pid_array.swap_remove(0));
+    missing_nodes -= 1;
+
+    while missing_nodes > 0 {
+        let i = rng.gen_range(0..missing_nodes);
+        pid_array.push(base_pid_array.swap_remove(i));
+        missing_nodes -= 1;
+    }
+
+    let mut g = GraphMap::<NodeInfo, usize, T>::with_capacity(num_nodes, num_edges);
+    assert!(g.node_count() == 0);
+
+    for i in 0..num_nodes {
+        g.add_node(NodeInfo{numerical_id: i, partition_id: pid_array[i]});
+    }
+
+    let nodes: Vec<NodeInfo> = g.nodes().collect();
+    let mut missing_intra_edges = num_edges - num_bridge_edges;
+
+    // This ensures that node 0 has at least one edge,
+    // to make sure its fixed partition id is useful
+    // to distinguish equivalent clusterings
+    let a = 0;
+
+    while true {
+        let b = rng.gen_range(1..num_nodes);
+
+        // This makes sure that node 0
+        // will always have an edge to
+        // some other node in its own
+        // partition.
+        if pid_array[a] != pid_array[b] {
+            continue;
+        }
+
+        g.add_edge(nodes[a], nodes[b], 1);            
+        break;
+    }
+    missing_intra_edges -= 1;
+
+    while missing_intra_edges > 0 {
+        let a = rng.gen_range(0..num_nodes - 1);
+        let b = rng.gen_range(a+1..num_nodes);
+
+        if g.contains_edge(nodes[a], nodes[b]) || (pid_array[a] != pid_array[b]) {
+            continue;
+        }
+
+        g.add_edge(nodes[a], nodes[b], 1);            
+        missing_intra_edges -= 1;
+    }
+
+    let mut missing_bridge_edges = num_bridge_edges;
+    while missing_bridge_edges > 0 {
+        let a = rng.gen_range(0..num_nodes - 1);
+        let b = rng.gen_range(a+1..num_nodes);
+
+        if g.contains_edge(nodes[a], nodes[b]) || (pid_array[a] == pid_array[b]) {
+            continue;
+        }
+
+        g.add_edge(nodes[a], nodes[b], 1);            
+        missing_bridge_edges -= 1;
+    }
+
+    let g: Graph<NodeInfo, usize, T, usize> = g.into_graph();
+    //println!("(Number, fraction) of inter-cluster edges: ({}, {})", inter_cluster_edges, inter_cluster_edges as f64 / num_edges as f64);
+    g
+}
+
+fn load_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, mixing_coeff: f64, num_communities: usize, max_comm_size_difference: usize) -> Graph<NodeInfo, usize, T, usize> {
+    let mut missing_nodes = 0;
+    let mut missing_edges = 0;
+
+    let mut base_pid_array: Vec<usize> = Vec::with_capacity(num_nodes);
+    let mut pid_array: Vec<usize> = Vec::with_capacity(num_nodes);
+
+    let mut g = GraphMap::<NodeInfo, usize, T>::with_capacity(num_nodes, num_edges);
+    assert!(g.node_count() == 0);
+
+
+    let g: Graph<NodeInfo, usize, T, usize> = g.into_graph();
+    //println!("(Number, fraction) of inter-cluster edges: ({}, {})", inter_cluster_edges, inter_cluster_edges as f64 / num_edges as f64);
     g
 }
 
@@ -1843,16 +2038,16 @@ fn array_to_vec(pid_array: &[usize]) -> Vec<Option<usize>> {
 }
 
 #[allow(dead_code)]
-fn test_metaheuristics_03(num_iter: usize) {
+pub fn test_metaheuristics_03(num_iter: usize) {
 
     let mut report = Vec::with_capacity(20);
     let start = Instant::now();
 
-    let num_nodes = 128;
-    let num_edges = 64;
+    let num_nodes = 64;
+    let num_edges = 192;
     let min_parallelism = 16;
     let mixing_coeff = 0.003;
-    let num_communities = 32;
+    let num_communities = 8;
     let max_comm_size_difference = 0;
 
     //let g = gen_random_digraph(true, 16, Some(160), 32, Some(600), Some(32));
@@ -1873,7 +2068,7 @@ fn test_metaheuristics_03(num_iter: usize) {
     let mut average_permanences: Vec<f64> = vec![];
     let mut immediate_successor_average: f64 = 0.;
 
-    let num_gen_options = [4000];
+    let num_gen_options = [20000];
     //let num_gen_options = [0];
     for num_generations in num_gen_options {
         let mut speedup_sum = 0.0;
@@ -1961,7 +2156,7 @@ fn test_metaheuristics_03(num_iter: usize) {
                 let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
                 if immediate_successor_execution_info.speedup > algo_best {
                     best_surprise_per_algo.insert("Random Immediate Successor", immediate_successor_execution_info.speedup);
-                    visualize_graph(&g, Some(&immediate_successor_finalized_placements), Some(format!("random_immediate_successor_{}", immediate_successor_execution_info.speedup)));
+                    visualize_graph(&g, Some(&immediate_successor_finalized_placements), Some(format!("random_immediate_successor_{:.2}", immediate_successor_execution_info.speedup)));
                 }
             }
 
@@ -1993,8 +2188,8 @@ fn test_metaheuristics_03(num_iter: usize) {
                     let mut res: Vec<Option<usize>> = vec![];
                     _s.result().into_iter().for_each(|v| res.push(Some(v)));
 
-                    visualize_graph(&g, Some(&res), Some(format!("differential_evolution_predicted_placement_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness())));
-                    visualize_graph(&g, Some(&finalized_core_placements), Some(format!("differential_evolution_final_placement_{}_{}_{}_{}", POP_SIZE, num_generations, _s.best_fitness(), execution_info.speedup)));
+                    visualize_graph(&g, Some(&res), Some(format!("differential_evolution_predicted_placement_{}_{}_{:.3}", POP_SIZE, num_generations, _s.best_fitness())));
+                    visualize_graph(&g, Some(&finalized_core_placements), Some(format!("differential_evolution_final_placement_{}_{}_{:.3}_{:.2}", POP_SIZE, num_generations, _s.best_fitness(), execution_info.speedup)));
                     println!("Exact speedup: {:.32}", execution_info.speedup);
                 }
             }
@@ -2290,61 +2485,146 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
     unwrapped_pid_array
 }
 
-fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>) -> String {
+fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>, random_pids: bool, collapsed_edge_id: bool, undirect_edges: bool, sort_edges: bool) -> String {
     let mut s: String = format!("N: {}, E: {}, ", g.node_count(), g.edge_count()).to_owned();
+    let mut rng = rand::thread_rng();
 
-    for e in g.edge_references() {
+    let mut edges = Vec::from_iter(g.edge_references());
+
+    if sort_edges {
+        //edges.sort_by(|e1, e2| a.partial_cmp(b).unwrap());
+        edges.sort_by(|e1, e2| {
+            let v1 = e1.source();
+            let v2 = e2.source();
+            let v1 = g.node_weight(v1).unwrap().numerical_id;
+            let v2 = g.node_weight(v2).unwrap().numerical_id;
+
+            v1.cmp(&v2)
+        });
+    }
+
+    for e in edges {
         let a = e.source();
         let b = e.target();
-        let a_id = g.node_weight(a).unwrap().numerical_id;
-        let b_id = g.node_weight(b).unwrap().numerical_id;
+        let mut a_id = g.node_weight(a).unwrap().numerical_id;
+        let mut b_id = g.node_weight(b).unwrap().numerical_id;
 
-        s = format!("{s}({a_id}, {b_id}) ");
+        if collapsed_edge_id {
+            let mut combined: usize = 0;
+
+            if a_id > b_id {
+                combined = b_id << 8 | a_id;
+            } else {
+                combined = a_id << 8 | b_id;
+            }
+
+            s = format!("{s}({combined}) ");
+        } else if undirect_edges {
+            if b_id < a_id {
+                let aux = a_id;
+                a_id = b_id;
+                b_id = aux;
+            }
+
+            s = format!("{s}({a_id}, {b_id}) ");
+        } else {
+            s = format!("{s}({a_id}, {b_id}) ");
+        }
+        //s = format!("{s}({:02}, {:02}) ", a_id, b_id);
     }
 
     s = format!("{s}| ");
 
-    for (_, n_info) in g.node_references() {
-        let pid = n_info.partition_id();
+    if random_pids {
+        let r_pid = rng.gen_range(0..100);
 
-        s = format!("{s}{pid}-");
+        for (_, n_info) in g.node_references() {
+            s = format!("{s}{r_pid}-");
+        }
+    } else {
+        for (_, n_info) in g.node_references() {
+            // This allows pid 0 to be reserved
+            let mut pid = n_info.partition_id() + 1;
+            let nid = n_info.numerical_id;
+
+            // TODO-PERFORMANCE: CHECK NODE WEIGHT ONLY ONCE FOR THE WHOLE GRAPH
+            let nid = g.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
+
+            let node_degree = g.neighbors_undirected(nid).count();
+
+            if node_degree == 0 {
+                // We are reserving pid 0 to zero-degree nodes
+                pid = 0;
+            }
+
+            s = format!("{s}{pid}-");
+        }
     }
 
     format!("{s}\n")
 }
 
-pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_edges_f: f64, max_edges_f: f64, min_communities: usize, max_communities: usize, min_mixing_coef: f64, max_mixing_coef: f64) {
+pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_edges_f: f64, max_edges_f: f64, min_communities: usize, max_communities: usize, min_mixing_coef: f64, max_mixing_coef: f64, num_iter: usize, apply_tree_transform: bool, visualize_graphs: bool, num_flattening_passes: usize, min_bridge_edges_f: f64, max_bridge_edges_f: f64) {
     let max_comm_size_difference = 1;
-    let num_flattening_passes = 2;
-    let num_iter = 5000000;
+    let use_lfr_like_generator = false;
+        
+    let mut rng = rand::thread_rng();
 
     let mut iter_vec = Vec::new();
     for i in 0..num_iter {
         iter_vec.push(i);
     }
 
-    let map_result = iter_vec.par_iter().map(|&n| {
+    let map_result = iter_vec.par_iter().map(|n| {
         let mut rng = rand::thread_rng();
+
         let mixing_coeff: f64 = rng.gen_range(min_mixing_coef..max_mixing_coef);
         let num_nodes: usize = rng.gen_range(min_nodes..max_nodes+1);
         let num_gen_communities: usize = rng.gen_range(min_communities..max_communities+1);
-        let edges_f: f64 = rng.gen_range(min_edges_f..max_edges_f);
+
+        let edges_f: f64 = if min_edges_f != max_edges_f {
+            rng.gen_range(min_edges_f..max_edges_f)
+        } else {
+            min_edges_f
+        };
+
+        let bridge_edges_f: f64 = if min_bridge_edges_f != max_bridge_edges_f {
+            rng.gen_range(min_bridge_edges_f..max_bridge_edges_f)
+        } else {
+            min_bridge_edges_f
+        };
 
         let num_larger_communities: usize = num_nodes % num_gen_communities;
         let base_community_size: usize = num_nodes / num_gen_communities;
         let max_edges: usize = num_gen_communities * base_community_size * (base_community_size - 1) / 2 + num_larger_communities * base_community_size;
         let num_edges: usize = (edges_f * (max_edges as f64)).round() as usize;
+        let bridge_edge_norm_multiplier: f64 = 32.0 / (num_nodes as f64);
+        let num_bridge_edges: usize = (bridge_edges_f * bridge_edge_norm_multiplier * (num_edges as f64)).round() as usize;
 
         //println!("Generating graph #{n} with (edges_f) = ({edges_f})");
-        let original_g = gen_lfr_like_graph::<Directed>(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
+
+        let mut original_g = if use_lfr_like_generator {
+            gen_lfr_like_graph::<Directed>(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference)
+        } else {
+            gen_random_graph::<Directed>(num_nodes, num_edges, num_bridge_edges, num_gen_communities, max_comm_size_difference)
+        };
+
+        if apply_tree_transform {
+            original_g = multi_pass_tree_transform(&original_g, num_flattening_passes, false);
+        }
+
+        if visualize_graphs {
+            visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}").to_string()));
+        }
+
         //println!("Finished generating random graph.");
 
         //visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some(format!("ground_truth_flattened_{n}_mc{mixing_coeff}").to_string()));
 
         //visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}").to_string()));
 
-        //return print_serialized_graph(&original_g);
-        return print_serialized_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false));
+        return print_serialized_graph(&original_g, false, false, false, true);
+        //return print_serialized_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), false);
     });
 
     let output_string = map_result.reduce(|| format!(""), |str_a, str_b| str_a + str_b.as_str());
@@ -2499,6 +2779,124 @@ fn linspace_vec(min_val: usize, max_val: usize, num_elements: usize) -> Vec<usiz
     v.push(max_val);
 
     v
+}
+
+pub fn test_graph_normalization() {
+    let num_nodes = 64;
+    let num_edges = 256;
+    let num_bridge_edges = 5;
+    let num_gen_communities = 4;
+    let max_comm_size_difference = 0;
+    let num_flattening_passes = 2;
+
+    let apply_tree_transform = false;
+    let visualize_graphs = true;
+
+    let mut original_g = gen_random_graph::<Directed>(num_nodes, num_edges, num_bridge_edges, num_gen_communities, max_comm_size_difference);
+
+    let mut pid_array: Vec<usize> = vec![];
+    pid_array.resize(num_nodes, 0);
+
+    for w in original_g.node_weights() {
+        pid_array[w.numerical_id] = w.partition_id;
+    }
+
+    normalize_graph(&original_g, false, Some(&pid_array));
+
+    if apply_tree_transform {
+        original_g = multi_pass_tree_transform(&original_g, num_flattening_passes, false);
+    }
+
+    if visualize_graphs {
+        visualize_graph(&original_g, None, Some(format!("normalization_test").to_string()));
+    }
+}
+
+fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, adapt_weights: bool, pid_array: Option<&[usize]>) -> Graph<NodeInfo, usize, Directed, usize> {
+    let mut g = original_graph.clone();
+    let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
+
+    let node_refs: Vec<(petgraph::prelude::NodeIndex<usize>, &NodeInfo)> = g.node_references().collect();
+    let first_node = node_refs[0].id();
+
+    let pid_array = pid_array.unwrap();
+    let mut edges_to_remove = vec![];
+
+    //TODO: Remove inter-cluster edges at this point
+    for v in g.node_references() {
+        for n in g.neighbors(v.id()) {
+            let v_id = g.node_weight(v.id()).unwrap().numerical_id;
+            let n_id = g.node_weight(n).unwrap().numerical_id;
+
+            let v_pid = pid_array[v_id];
+            let n_pid = pid_array[n_id];
+
+            if v_pid != n_pid {
+                println!("Inter-cluster edge: ({}, {})", v_id, n_id);
+                //let edge_to_remove = g.find_edge(v.id(), n);
+                edges_to_remove.push((v.id(), n));
+            }
+        }
+    }
+
+    println!("Number of edges in g: {}", g.edge_count());
+    for (a, b) in edges_to_remove {
+        let e = g.find_edge(a, b);
+        g.remove_edge(e.unwrap());
+    }
+    println!("Number of edges in g: {}", g.edge_count());
+
+    let mut nodes_per_connected_component: Vec<Vec<usize>> = vec![];
+
+    // Adding a new component
+    nodes_per_connected_component.push(vec![]);
+
+    let mut node_queue = vec![first_node];    
+
+    'outer: loop {
+        while !node_queue.is_empty() {
+            let v = node_queue.pop().unwrap();
+            let v_id = g.node_weight(v).unwrap().numerical_id;
+            nodes_per_connected_component.last_mut().unwrap().push(v_id);
+            was_added[v_id] = true;
+
+            for n in g.neighbors_undirected(v) {
+                let n_id = g.node_weight(n).unwrap().numerical_id;
+
+                if !was_added[n_id] {
+                    was_added[n_id] = true;
+                    node_queue.push(n);
+                }
+            }
+        }
+
+        for v in g.node_references() {
+            let v_id = v.1.numerical_id;
+
+            if !was_added[v_id] {
+                node_queue.push(v.id());
+
+                // Adding a new component
+                nodes_per_connected_component.push(vec![]);
+                continue 'outer;
+            }
+        }
+
+        break;
+    }
+
+    let mut count = 0;
+    for cc in nodes_per_connected_component {
+        print!("Connected component {}: ", count);
+        for n in cc {
+            print!("{:?}, ", n);
+        }
+        println!();
+
+        count += 1;
+    }
+
+    g
 }
 
 fn tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>, adapt_weights: bool) -> Graph<NodeInfo, usize, Directed, usize> {
