@@ -412,6 +412,8 @@ fn test_task_dependency_graph_generation_and_retirement_parametrized(chain: bool
 }
 
 fn main() {
+    //rayon::ThreadPoolBuilder::new().num_threads(16).build_global().unwrap();
+
     //gen_sample_graph_image();
     //test_histogram_01();
     //test_metaheuristics_01();
