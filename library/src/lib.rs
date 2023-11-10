@@ -2783,43 +2783,160 @@ fn linspace_vec(min_val: usize, max_val: usize, num_elements: usize) -> Vec<usiz
 
 pub fn test_graph_normalization() {
     let num_nodes = 64;
-    let num_edges = 256;
+    let num_edges = 64;
     let num_bridge_edges = 5;
     let num_gen_communities = 4;
-    let max_comm_size_difference = 0;
+    let max_comm_size_difference = 2;
     let num_flattening_passes = 2;
 
     let apply_tree_transform = false;
     let visualize_graphs = true;
 
-    let mut original_g = gen_random_graph::<Directed>(num_nodes, num_edges, num_bridge_edges, num_gen_communities, max_comm_size_difference);
+    let num_examples = 15;
 
-    let mut pid_array: Vec<usize> = vec![];
-    pid_array.resize(num_nodes, 0);
+    for i in 0..num_examples {
+        println!("Processing example {}", i);
 
-    for w in original_g.node_weights() {
-        pid_array[w.numerical_id] = w.partition_id;
-    }
+        let mut original_g = gen_random_graph::<Directed>(num_nodes, num_edges, num_bridge_edges, num_gen_communities, max_comm_size_difference);
 
-    normalize_graph(&original_g, false, Some(&pid_array));
+        let mut pid_array: Vec<usize> = vec![];
+        pid_array.resize(num_nodes, 0);
 
-    if apply_tree_transform {
-        original_g = multi_pass_tree_transform(&original_g, num_flattening_passes, false);
-    }
+        for w in original_g.node_weights() {
+            pid_array[w.numerical_id] = w.partition_id;
+        }
 
-    if visualize_graphs {
-        visualize_graph(&original_g, None, Some(format!("normalization_test").to_string()));
+        if apply_tree_transform {
+            original_g = multi_pass_tree_transform(&original_g, num_flattening_passes, false);
+        }
+
+        let normalized_pid_array = normalize_graph(&original_g, false, Some(&pid_array));
+        let normalized_pid_array: Vec<Option<usize>> = normalized_pid_array.iter().map(|&k| Some(k)).collect();
+
+        if visualize_graphs {
+            visualize_graph(&original_g, None, Some(format!("normalization_test_{}_original_pids", i).to_string()));
+            visualize_graph(&original_g, Some(&normalized_pid_array), Some(format!("normalization_test_{}_new_pids", i).to_string()));
+        }
+
+        println!();
     }
 }
 
-fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, adapt_weights: bool, pid_array: Option<&[usize]>) -> Graph<NodeInfo, usize, Directed, usize> {
+#[derive(Debug)]
+struct ConnectedComponent {
+    nodes: Vec<usize>,
+    num_nodes: usize,
+    min_id: usize,
+}
+
+impl ConnectedComponent {
+    fn new() -> ConnectedComponent {
+        ConnectedComponent {
+            nodes: vec![],
+            num_nodes: 0,
+            min_id: usize::MAX
+        }
+    }
+
+    fn update_id_if_lower(&mut self, candidate: usize) {
+        if self.min_id > candidate {
+            self.min_id = candidate;
+        }
+    }
+
+    fn add_node(&mut self, node_id: usize) {
+        self.nodes.push(node_id);
+        self.num_nodes += 1;
+        self.update_id_if_lower(node_id);
+    }
+
+    fn cluster_id(&self, pid_array: &[usize]) -> usize {
+        return pid_array[self.nodes[0]];
+    }
+
+    fn update_node_pids(&self, pid_array: &mut [usize], target_pid: usize) {
+        for n in &self.nodes {
+            pid_array[*n] = target_pid;
+        }
+    }
+}
+
+fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, adapt_weights: bool, pid_array: Option<&[usize]>) -> Vec<usize> {
     let mut g = original_graph.clone();
     let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
 
     let node_refs: Vec<(petgraph::prelude::NodeIndex<usize>, &NodeInfo)> = g.node_references().collect();
     let first_node = node_refs[0].id();
 
-    let pid_array = pid_array.unwrap();
+    let mut pid_array = pid_array.unwrap();
+
+    // Calculate the original pid distribution
+    let mut pid_distribution: HashMap<usize, usize> = HashMap::new();
+
+    let mut max_pid: usize = 0;
+    for pid in pid_array {
+        if *pid > max_pid {
+            max_pid = *pid;
+        }
+        *pid_distribution.entry(*pid).or_insert(0) += 1;
+    }
+
+    let mut pid_dist_vec: Vec<Option<(usize, usize)>> = vec![];
+    pid_dist_vec.resize(max_pid + 1, None);
+
+    for pid in pid_distribution.keys() {
+        let num_tasks = pid_distribution.get(pid).unwrap();
+        println!("Number of tasks with pid {}: {}", pid, num_tasks);
+        pid_dist_vec[*pid] = Some((*pid, *num_tasks));
+    }
+
+    pid_dist_vec.sort_by(|a, b| {
+        let a = if a.is_some() {
+            a.unwrap()
+        } else {
+            (0, usize::MAX)
+        };
+
+        let b = if b.is_some() {
+            b.unwrap()
+        } else {
+            (0, usize::MAX)
+        };
+
+        a.1.cmp(&b.1)
+    });
+
+    let mut old_to_new_pids: HashMap<usize, usize> = HashMap::new();
+
+    for (new_pid, info) in pid_dist_vec.iter().enumerate() {
+        if !info.is_some() {
+            break;
+        }
+
+        max_pid = new_pid;
+
+        let old_pid = info.unwrap().0;
+        old_to_new_pids.insert(old_pid, new_pid);
+    }
+
+    println!("pid_dist_vec");
+    for t in pid_dist_vec {
+        println!("{:?}", t);
+    }
+
+    println!("old_to_new_pids");
+    println!("{:?}", old_to_new_pids);
+
+    let mut new_pid_array: Vec<usize> = vec![];
+    new_pid_array.resize(pid_array.len(), 0);
+
+    for i in 0..(pid_array.len()) {
+        new_pid_array[i] = *old_to_new_pids.get(&pid_array[i]).unwrap();
+    }
+
+    println!("{:?}", pid_array);
+    println!("{:?}", new_pid_array);
+
     let mut edges_to_remove = vec![];
 
     //TODO: Remove inter-cluster edges at this point
@@ -2846,18 +2963,26 @@ fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, ada
     }
     println!("Number of edges in g: {}", g.edge_count());
 
+    let mut ccs: Vec<ConnectedComponent> = vec![];
     let mut nodes_per_connected_component: Vec<Vec<usize>> = vec![];
+    let mut cc_sizes: Vec<usize> = vec![];
+    let mut cc_min_ids: Vec<usize> = vec![];
 
     // Adding a new component
-    nodes_per_connected_component.push(vec![]);
+    
+    ccs.push(ConnectedComponent::new());
 
     let mut node_queue = vec![first_node];    
 
     'outer: loop {
         while !node_queue.is_empty() {
+            let current_cc = ccs.last_mut().unwrap();
+
             let v = node_queue.pop().unwrap();
             let v_id = g.node_weight(v).unwrap().numerical_id;
-            nodes_per_connected_component.last_mut().unwrap().push(v_id);
+
+            current_cc.add_node(v_id);
+
             was_added[v_id] = true;
 
             for n in g.neighbors_undirected(v) {
@@ -2877,7 +3002,7 @@ fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, ada
                 node_queue.push(v.id());
 
                 // Adding a new component
-                nodes_per_connected_component.push(vec![]);
+                ccs.push(ConnectedComponent::new());
                 continue 'outer;
             }
         }
@@ -2885,18 +3010,74 @@ fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, ada
         break;
     }
 
-    let mut count = 0;
-    for cc in nodes_per_connected_component {
-        print!("Connected component {}: ", count);
-        for n in cc {
+    ccs.sort_by(|cc1, cc2| {
+        match cc1.num_nodes.cmp(&cc2.num_nodes) {
+            std::cmp::Ordering::Equal => cc1.min_id.cmp(&cc2.min_id),
+            other => other,
+        }
+    });
+
+    let mut size_cc_hash: HashMap<usize, Vec<&ConnectedComponent>> = HashMap::new();
+    let mut size_count_per_cluster_hash: HashMap<usize, Vec<usize>> = HashMap::new();
+
+    for (index, cc) in ccs.iter().enumerate() {
+        print!("Connected component {}, with {} elements and min_id {}: ", index, cc.num_nodes, cc.min_id);
+        for n in &cc.nodes {
             print!("{:?}, ", n);
         }
         println!();
 
-        count += 1;
+        let cc_pid = cc.cluster_id(&new_pid_array);
+
+        size_cc_hash.entry(cc.num_nodes).or_insert(vec![]).push(&cc);
+
+        size_count_per_cluster_hash.entry(cc.num_nodes).or_insert_with(|| {
+            let mut count_vec = vec![];
+            count_vec.resize(max_pid + 1, 0);
+            count_vec
+        })[cc_pid] += 1;
     }
 
-    g
+    println!("size_cc_hash");
+    println!("{:?}, ", size_cc_hash);
+
+    println!("size_count_per_cluster_hash");
+    println!("{:?}, ", size_count_per_cluster_hash);
+
+    for (size, count) in size_count_per_cluster_hash.iter() {
+        println!("Size being processed: {}", size);
+
+        let mut ccs_processed_so_far = 0;
+
+        for c_id in 0..=max_pid {
+            println!("Partition receiving nodes: {}", c_id);
+
+            let mut ccs_left_to_update = count[c_id];
+            println!("We'll be updating the pids of {} connected components.", ccs_left_to_update);
+
+            let ccs_to_update = size_cc_hash.get_mut(&size).unwrap();
+
+            while ccs_left_to_update > 0 {
+                ccs_to_update[ccs_processed_so_far].update_node_pids(&mut new_pid_array, c_id);
+                ccs_processed_so_far += 1;
+                ccs_left_to_update -= 1;
+            }
+        }
+    }
+
+
+/*
+    // We don't need to sort the vectors independently
+    // here because we have already sorted the whole
+    // sequence of connected components before
+    for cc_vec in count_cc_hash.values_mut() {
+        cc_vec.sort_by(|a, b| {
+            a.min_id.cmp(&b.min_id)
+        });
+    }
+*/
+
+    new_pid_array
 }
 
 fn tree_transform(original_graph: &Graph<NodeInfo, usize, Directed, usize>, adapt_weights: bool) -> Graph<NodeInfo, usize, Directed, usize> {
