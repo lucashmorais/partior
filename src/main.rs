@@ -422,8 +422,46 @@ fn main() {
     //test_metaheuristics_03(10);
     //test_tree_transform();
     //test_n_tree_transform();
-    //test_multi_level_clustering(false); // 2023-10
-    test_gen_multiple_ground_truths(1, 128, 0.0, 0.45, 1, 8, 0.0, 0.03);
+    //test_gen_multiple_ground_truths(1, 128, 0.0, 0.45, 1, 8, 0.0, 0.03, 1000000);
+    //test_gen_multiple_ground_truths(32, 32, 0.2, 0.20001, 2, 2, 0.02, 0.020001, 10000000);
+    //test_gen_multiple_ground_truths(256, 256, 0.199999, 0.2, 2, 2, 0.02, 0.020001, 1000000);
+    //test_gen_multiple_ground_truths(16, 16, 0.199999, 0.2, 2, 2, 0.02, 0.020001, 100, false, true);
+    //test_gen_multiple_ground_truths(32, 32, 0.199999, 0.2, 2, 2, 0.02, 0.020001, 100, true, true);
+    //test_gen_multiple_ground_truths(32, 32, 0.99999, 1.0000, 2, 2, 0.02, 0.020001, 100000, true, false);
+
+    //test_gen_multiple_ground_truths(256, 256, 0.99999, 1.0000, 2, 2, 0.02, 0.020001, 100, true, true);
+    //test_gen_multiple_ground_truths(256, 256, 0.99999, 1.0000, 2, 2, 0.02, 0.020001, 100000, true, false);
+    //test_gen_multiple_ground_truths(128, 128, 0.99999, 1.0000, 2, 2, 0.02, 0.020001, 100000, true, false);
+    //test_gen_multiple_ground_truths(128, 128, 0.99999, 1.0000, 2, 2, 0.02, 0.020001, 100000, true, false, 2, 0.0, 0.02);
+    //test_gen_multiple_ground_truths(256, 256, 1.0, 1.0, 2, 2, 0.02, 0.020001, 100, true, true, 2, 0.0, 0.01);
+
+    // CURRENT BEGIN
+    //test_gen_multiple_ground_truths(256, 256, 0.0, 1.0, 15, 15, 0.02, 0.020001, 100, true, true, 2, 0.00, 0.02, 1); // For graph-cruncher
+    //test_gen_multiple_ground_truths(1, 1024, 0.0, 1.0, 1, 32, 0.02, 0.020001, 1000, true, false, 2, 0.00, 0.50, 300, false) // For graph-cruncher
+
+    //test_multi_level_clustering(true, false); // 2023-10
+    //test_gen_multiple_ground_truths(1, 256, 0.0, 1.0, 1, 32, 0.02, 0.020001, 1000, true, false, 2, 0.00, 0.50, 1, false) // For graph-cruncher
+
+    test_gen_multiple_ground_truths(0, 128, 0.0, 1.0, 1, 32, 0.02, 0.020001, 1000, true, true, 2, 0.00, 0.50, 1, false) // For graph-cruncher
+
+    //test_gen_multiple_ground_truths(64, 64, 0.0, 1.0, 2, 2, 0.02, 0.020001, 100, true, true, 2, 0.00, 0.02, 1);
+    //test_gen_multiple_ground_truths(64, 64, 0.0, 0.2, 2, 8, 0.02, 0.020001, 100, true, true, 2, 0.00, 0.02, 1);
+    //test_gen_multiple_ground_truths(16, 16, 0.0, 0.2, 2, 2, 0.02, 0.020001, 100, true, false, 2, 0.00, 0.02, 1);
+    //beta_test();
+    //pert_test();
+    //gamma_test();
+    // CURRENT END
+
+    //test_gen_multiple_ground_truths(32, 32, 1.0, 1.0, 2, 2, 0.02, 0.020001, 100, true, true, 2, 0.02, 0.10);
+    //test_gen_multiple_ground_truths(8, 8, 0.1, 0.9, 2, 2, 0.02, 0.020001, 100, true, true, 2, 0.00, 0.10);
+    //test_gen_multiple_ground_truths(32, 32, 0.09, 0.10, 2, 2, 0.02, 0.020001, 100, true, true, 2);
+    //test_gen_multiple_ground_truths(32, 32, 0.99999, 1.0000, 2, 2, 0.02, 0.020001, 30, true, true, 2);
+    //test_gen_multiple_ground_truths(16, 16, 0.99999, 1.0000, 2, 2, 0.02, 0.020001, 100, true, false);
+
+    //test_gen_multiple_ground_truths(32, 32, 0.99999, 1.0000, 2, 2, 0.02, 0.020001, 100000, true, false);
+
+    //test_gen_multiple_ground_truths(128, 128, 0.2, 0.20001, 2, 2, 0.02, 0.020001, 100000);
+    //test_gen_multiple_ground_truths(32, 32, 0.2, 0.20001, 2, 2, 0.02, 0.020001, 100);
     //test_local_surprise_search();
     //test_local_permanence_search();
     //test_dinitz_max_flow();
@@ -451,4 +489,6 @@ fn main() {
     test_sampling_array();
     test_sampling_no_vec();
     */
+
+    //test_graph_normalization();
 }

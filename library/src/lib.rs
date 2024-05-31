@@ -33,14 +33,20 @@ use metaheuristics_nature::tests::TestObj;
 use once_cell::sync::Lazy;
 use dinic_maxflow::*;
 
+use rand::prelude::*;
+use rand_distr::{Distribution, Beta, Gamma, Pert, Triangular, Exp};
+
 use scan_fmt::*;
 mod dinic_maxflow;
 
 const PRINT_WEIGHTS: bool = false;
-const MAX_NUMBER_OF_PARTITIONS: usize = 8;
-//const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
-const KERNEL_NUMBER_OF_PARTITIONS: usize = 8;
-const MAX_NUMBER_OF_NODES: usize = 257;
+//const MAX_NUMBER_OF_PARTITIONS: usize = 8;
+//const MAX_NUMBER_OF_PARTITIONS: usize = 15;
+const MAX_NUMBER_OF_PARTITIONS: usize = 16;
+const KERNEL_NUMBER_OF_PARTITIONS: usize = 2;
+//const KERNEL_NUMBER_OF_PARTITIONS: usize = 8;
+//const MAX_NUMBER_OF_NODES: usize = 257;
+const MAX_NUMBER_OF_NODES: usize = 1025;
 //const MAX_BINOMIAL_A: usize = 550000;
 const MAX_BINOMIAL_A: usize = 33000;
 const MAX_BINOMIAL_B: usize = 1024;
@@ -462,9 +468,9 @@ fn calculate_surprise(g: &Graph<NodeInfo, usize, Directed, usize>, pid_array: Op
     let top = min(num_links, num_max_internal_links);
 
     let j = (num_internal_links + top) / 2;
-    surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false) - (num_internal_links as f64) * 0.001;
+    //surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false) - (num_internal_links as f64) * 0.001;
     //surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false) - (num_internal_links as f64) * 0.01;
-    //surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false);
+    surprise += new_binomial(num_max_internal_links, j, false) + new_binomial(num_max_links - num_max_internal_links, num_links - j, false);
 
     //surprise -= new_binomial(num_max_links, num_links);
 
@@ -1888,13 +1894,18 @@ fn gen_random_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, num_bridge_
     let min_l = (num_nodes as f64 / num_communities as f64).ceil() as usize - d;
     let max_l = num_nodes / num_communities;
     
-    let l = rng.gen_range(min_l..=max_l);
+    let l = if max_l > min_l {
+        rng.gen_range(min_l..=max_l)
+    } else {
+        max_l
+    };
     let h = l + d;
     let mut missing_nodes = num_nodes - l * num_communities;
 
     let mut community_sizes = vec![l; num_communities];
 
     while missing_nodes > 0 {
+        //println!("Missing nodes: {}", missing_nodes);
         let r = rng.gen_range(0..num_communities);
 
         if community_sizes[r] < h {
@@ -1920,6 +1931,7 @@ fn gen_random_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, num_bridge_
     missing_nodes -= 1;
 
     while missing_nodes > 0 {
+        //println!("Missing nodes: {}", missing_nodes);
         let i = rng.gen_range(0..missing_nodes);
         pid_array.push(base_pid_array.swap_remove(i));
         missing_nodes -= 1;
@@ -1934,7 +1946,8 @@ fn gen_random_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, num_bridge_
 
     let nodes: Vec<NodeInfo> = g.nodes().collect();
     let mut missing_intra_edges = num_edges - num_bridge_edges;
-
+    
+/*
     // This ensures that node 0 has at least one edge,
     // to make sure its fixed partition id is useful
     // to distinguish equivalent clusterings
@@ -1955,6 +1968,7 @@ fn gen_random_graph<T: EdgeType>(num_nodes: usize, num_edges: usize, num_bridge_
         break;
     }
     missing_intra_edges -= 1;
+*/
 
     while missing_intra_edges > 0 {
         let a = rng.gen_range(0..num_nodes - 1);
@@ -2485,21 +2499,35 @@ fn unwrap_pid_array(pid_array: &[Option<usize>]) -> Vec<usize> {
     unwrapped_pid_array
 }
 
-fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>, random_pids: bool, collapsed_edge_id: bool, undirect_edges: bool, sort_edges: bool) -> String {
+fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>, random_pids: bool,
+collapsed_edge_id: bool, undirect_edges: bool, sort_edges: bool, pid_array: Option<&[usize]>, normalize_graph: bool) -> String {
     let mut s: String = format!("N: {}, E: {}, ", g.node_count(), g.edge_count()).to_owned();
     let mut rng = rand::thread_rng();
 
     let mut edges = Vec::from_iter(g.edge_references());
 
+    // TODO: ENSURE THIS WORKS WELL WITH `undirect_edges`
     if sort_edges {
         //edges.sort_by(|e1, e2| a.partial_cmp(b).unwrap());
         edges.sort_by(|e1, e2| {
             let v1 = e1.source();
             let v2 = e2.source();
+
             let v1 = g.node_weight(v1).unwrap().numerical_id;
             let v2 = g.node_weight(v2).unwrap().numerical_id;
 
-            v1.cmp(&v2)
+            match v1.cmp(&v2) {
+                std::cmp::Ordering::Equal => {
+                    let t1 = e1.target();
+                    let t2 = e2.target();
+
+                    let t1 = g.node_weight(t1).unwrap().numerical_id;
+                    let t2 = g.node_weight(t2).unwrap().numerical_id;
+
+                    t1.cmp(&t2)
+                },
+                other => other,
+            }
         });
     }
 
@@ -2543,18 +2571,27 @@ fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>, ran
         }
     } else {
         for (_, n_info) in g.node_references() {
-            // This allows pid 0 to be reserved
-            let mut pid = n_info.partition_id() + 1;
+            let mut pid = 0;
             let nid = n_info.numerical_id;
 
-            // TODO-PERFORMANCE: CHECK NODE WEIGHT ONLY ONCE FOR THE WHOLE GRAPH
-            let nid = g.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
+            if pid_array.is_some() {
+                pid = pid_array.unwrap()[nid];
+            } else {
+                // This allows pid 0 to be reserved
+                pid = n_info.partition_id();
+                if normalize_graph {
+                    pid += 1;
 
-            let node_degree = g.neighbors_undirected(nid).count();
+                    // TODO-PERFORMANCE: CHECK NODE WEIGHT ONLY ONCE FOR THE WHOLE GRAPH
+                    let nid = g.node_references().find(|x| x.1.numerical_id == nid).unwrap().id();
 
-            if node_degree == 0 {
-                // We are reserving pid 0 to zero-degree nodes
-                pid = 0;
+                    let node_degree = g.neighbors_undirected(nid).count();
+
+                    if node_degree == 0 {
+                        // We are reserving pid 0 to zero-degree nodes
+                        pid = 0;
+                    }
+                }
             }
 
             s = format!("{s}{pid}-");
@@ -2564,8 +2601,90 @@ fn print_serialized_graph<T: EdgeType>(g: &Graph<NodeInfo, usize, T, usize>, ran
     format!("{s}\n")
 }
 
-pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_edges_f: f64, max_edges_f: f64, min_communities: usize, max_communities: usize, min_mixing_coef: f64, max_mixing_coef: f64, num_iter: usize, apply_tree_transform: bool, visualize_graphs: bool, num_flattening_passes: usize, min_bridge_edges_f: f64, max_bridge_edges_f: f64) {
-    let max_comm_size_difference = 1;
+pub fn beta_test() {
+    let mut rng = rand::thread_rng();
+
+    // Mean = a / (a + b) = 1/3
+    // Variance a * b / ((a+b)^2*(a+b+1)) ≃ 0.0889
+    let beta = Beta::new(0.5, 1.0).unwrap();
+
+    let sample = beta.sample(&mut rng);
+    println!("Sample from Beta distribution: {}", sample);
+
+    /*
+    let power_law_dist = PowerLaw::new(2.0); // Example: power law with exponent 2
+
+    // Generate a random sample
+    let uniform = Uniform::new(0.0, 1.0);
+    let sample = power_law_dist.map(uniform.sample(&mut rng));
+
+    println!("Random sample from power law distribution: {}", sample);
+    */
+}
+
+pub fn pert_test() {
+    let mut rng = rand::thread_rng();
+
+    let d = Pert::new(0., 1., 0.0004).unwrap();
+    let v = d.sample(&mut rand::thread_rng());
+    println!("{} is from a PERT distribution", v);
+}
+
+pub fn gamma_test() {
+    let mut rng = rand::thread_rng();
+
+    let beta = Gamma::new(2.0, 5.0).unwrap();
+
+    let sample = beta.sample(&mut rng);
+    println!("Sample from Gamma distribution: {}", sample);
+
+    /*
+    let power_law_dist = PowerLaw::new(2.0); // Example: power law with exponent 2
+
+    // Generate a random sample
+    let uniform = Uniform::new(0.0, 1.0);
+    let sample = power_law_dist.map(uniform.sample(&mut rng));
+
+    println!("Random sample from power law distribution: {}", sample);
+    */
+}
+
+pub fn beta_dist_from_mean_and_std(m: f64, s: f64) -> Beta<f64> {
+    // https://www.desmos.com/calculator/kx83qio7yl
+
+    let n = m * (1.0 - m) / (s * s); // Precision parameter
+    let a = m * n;
+    let b = (1.0 - m) * n;
+
+    Beta::new(a, b).unwrap()
+}
+
+pub fn fraction_select_range(min_val: usize, max_val: usize, fraction: f64) -> usize {
+    const ROUND_C: f64 = 0.499999;
+    const D_ROUND_C: f64 = 2.0 * ROUND_C;
+
+    let fraction = if fraction <= 1.0 {
+        fraction
+    } else {
+        1.0
+    };
+
+    let fraction = if fraction >= 0.0 {
+        fraction
+    } else {
+        0.0
+    };
+
+    //println!("fraction: {fraction}");
+
+    (fraction * ((max_val - min_val) as f64 + D_ROUND_C) + (min_val as f64 - ROUND_C)).round() as usize
+}
+
+pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_edges_f: f64, max_edges_f: f64, min_communities: usize, max_communities: usize, min_mixing_coef: f64, max_mixing_coef: f64, num_iter: usize, apply_tree_transform: bool, visualize_graphs: bool, num_flattening_passes: usize, min_bridge_edges_f: f64, max_bridge_edges_f: f64, max_comm_size_difference: usize, normalize_graphs: bool) {
+    // Caution: there are many requests that require
+    //          the generation of unever partitions.
+    //          If we set this to zero, we'll livelock
+    //          while handling them.
     let use_lfr_like_generator = false;
         
     let mut rng = rand::thread_rng();
@@ -2575,12 +2694,46 @@ pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_e
         iter_vec.push(i);
     }
 
+    const ROUND_C: f64 = 0.499999;
+    const D_ROUND_C: f64 = 2.0 * ROUND_C;
+
     let map_result = iter_vec.par_iter().map(|n| {
         let mut rng = rand::thread_rng();
 
+        //let num_communities_dist = Beta::new(0.5, 1.0).unwrap();
+        let num_communities_dist = Pert::new(0.0, 1.0, 0.25).unwrap();
+        let num_communities_dist = Pert::new_with_shape(0.0, 1.0, 0.25, 10.0).unwrap();
+        //let num_nodes_dist = Beta::new(1.0, 0.111).unwrap();
+        //let num_bridges_dist = beta_dist_from_mean_and_std(0.05, 0.1);
+        //let num_bridges_dist = beta_dist_from_mean_and_std(0.02, 0.1);
+        //let num_nodes_dist = Pert::new_with_shape(0.0, 1.0, 0.95).unwrap();
+        //let num_nodes_dist = Exp::new(5.63333687).unwrap();
+        let num_nodes_dist = Exp::new(3.0).unwrap();
+        //let num_bridges_dist = Pert::new_with_shape(0.0, 1.0, 0.02, 8.0).unwrap();
+        let num_bridges_dist = Pert::new_with_shape(0.0, 1.0, 0.01, 8.0).unwrap();
+
+        //let num_nodes: usize = rng.gen_range(min_nodes..max_nodes+1);
+        let mut num_nodes_f: f64 = 10.0;
+
+        while num_nodes_f > 1.0 {
+            num_nodes_f = num_nodes_dist.sample(&mut rng);
+        }
+        
+        let num_nodes = fraction_select_range(min_nodes, max_nodes, 1.0 - num_nodes_f);
+
+        //let num_edges_dist = beta_dist_from_mean_and_std(2.0 / ((num_nodes + 1) as f64), 0.02);
+        //let num_edges_dist = Pert::new(0.0, 1.0, 0.2).unwrap();
+        let num_edges_dist = Pert::new(0.0, 1.0, 0.5).unwrap();
+
+        let max_communities = if max_communities > num_nodes {
+            num_nodes
+        } else {
+            max_communities
+        };
+
         let mixing_coeff: f64 = rng.gen_range(min_mixing_coef..max_mixing_coef);
-        let num_nodes: usize = rng.gen_range(min_nodes..max_nodes+1);
-        let num_gen_communities: usize = rng.gen_range(min_communities..max_communities+1);
+        //let num_gen_communities: usize = rng.gen_range(min_communities..max_communities+1);
+        let num_gen_communities = (num_communities_dist.sample(&mut rng) * ((max_communities - min_communities) as f64 + D_ROUND_C) + (min_communities as f64 - ROUND_C)).round() as usize;
 
         let edges_f: f64 = if min_edges_f != max_edges_f {
             rng.gen_range(min_edges_f..max_edges_f)
@@ -2589,7 +2742,8 @@ pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_e
         };
 
         let bridge_edges_f: f64 = if min_bridge_edges_f != max_bridge_edges_f {
-            rng.gen_range(min_bridge_edges_f..max_bridge_edges_f)
+            //rng.gen_range(min_bridge_edges_f..max_bridge_edges_f)
+            num_bridges_dist.sample(&mut rng)
         } else {
             min_bridge_edges_f
         };
@@ -2597,9 +2751,16 @@ pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_e
         let num_larger_communities: usize = num_nodes % num_gen_communities;
         let base_community_size: usize = num_nodes / num_gen_communities;
         let max_edges: usize = num_gen_communities * base_community_size * (base_community_size - 1) / 2 + num_larger_communities * base_community_size;
-        let num_edges: usize = (edges_f * (max_edges as f64)).round() as usize;
-        let bridge_edge_norm_multiplier: f64 = 32.0 / (num_nodes as f64);
-        let num_bridge_edges: usize = (bridge_edges_f * bridge_edge_norm_multiplier * (num_edges as f64)).round() as usize;
+        //println!("max_edges: {max_edges}");
+        //let num_edges: usize = (edges_f * (max_edges as f64)).round() as usize;
+        let num_edges = fraction_select_range(0, max_edges, num_edges_dist.sample(&mut rng));
+        //let bridge_edge_norm_multiplier: f64 = 1.0 / (num_nodes as f64);
+        let bridge_edge_norm_multiplier: f64 = 1.0;
+        let num_bridge_edges: usize = if num_gen_communities > 1 {
+            (bridge_edges_f * bridge_edge_norm_multiplier * (num_edges as f64)).round() as usize
+        } else {
+            0
+        };
 
         //println!("Generating graph #{n} with (edges_f) = ({edges_f})");
 
@@ -2613,17 +2774,25 @@ pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_e
             original_g = multi_pass_tree_transform(&original_g, num_flattening_passes, false);
         }
 
-        if visualize_graphs {
-            visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}").to_string()));
+        if normalize_graphs {
+            let normalized_pid_array = normalize_graph(&original_g, false, None);
+            let normalized_pid_array_vis: Vec<Option<usize>> = normalized_pid_array.iter().map(|&k| Some(k)).collect();
+
+            if visualize_graphs {
+                visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}_default").to_string()));
+                visualize_graph(&original_g, Some(&normalized_pid_array_vis), Some(format!("ground_truth_original_{n}_mc{mixing_coeff}_normalized").to_string()));
+            }
+
+            return print_serialized_graph(&original_g, false, false, false, true, Some(&normalized_pid_array), normalize_graphs); // It sorts edges
+        } else {
+            if visualize_graphs {
+                visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}_default").to_string()));
+            }
+
+            return print_serialized_graph(&original_g, false, false, false, true, None, normalize_graphs);
         }
+        //return print_serialized_graph(&original_g, false, false, false, false, Some(&normalized_pid_array)); // Doesn't sort edges or undirect edges
 
-        //println!("Finished generating random graph.");
-
-        //visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some(format!("ground_truth_flattened_{n}_mc{mixing_coeff}").to_string()));
-
-        //visualize_graph(&original_g, None, Some(format!("ground_truth_original_{n}_mc{mixing_coeff}").to_string()));
-
-        return print_serialized_graph(&original_g, false, false, false, true);
         //return print_serialized_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), false);
     });
 
@@ -2631,10 +2800,10 @@ pub fn test_gen_multiple_ground_truths(min_nodes: usize, max_nodes: usize, min_e
     print!("{output_string}");
 }
 
-pub fn test_multi_level_clustering(use_flattened_graph: bool) {
+pub fn test_multi_level_clustering(use_flattened_graph: bool, use_original_graph: bool) {
     let num_nodes = 64;
     let num_edges = 192;
-    let mixing_coeff = 0.003;
+    let mixing_coeff = 0.005;
     //let mixing_coeff = 0.000;
     let num_gen_communities = 8;
     let num_communities = 8;
@@ -2642,67 +2811,89 @@ pub fn test_multi_level_clustering(use_flattened_graph: bool) {
     let num_flattening_passes = 2;
 
     let original_g = gen_lfr_like_graph(num_nodes, num_edges, mixing_coeff, num_gen_communities, max_comm_size_difference);
+    let g = original_g.clone();
+/*
     let g = if use_flattened_graph {
         multi_pass_tree_transform(&original_g, 2, false)
     } else {
         original_g.clone()
     };
+*/
     println!("Finished generating random graph.");
 
     const TEMP_FILE_NAME: &str = "metaheuristics_evolution.csv";
-    const NUM_SOLVER_EVALUATIONS: usize = 10;
+    const NUM_SOLVER_EVALUATIONS: usize = 5;
     const NUM_SIMULATOR_EVALUATIONS: usize = 10;
 
     let mut best_surprise_per_algo = HashMap::new();
+    let mut best_tree_surprise: f64 = f64::MAX;
 
     let mut _f = File::create(TEMP_FILE_NAME).unwrap();
-    const POP_SIZE: usize = 32;
+    const POP_SIZE: usize = 64;
+
+    visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some("ground_truth_flattened".to_string()));
+    visualize_graph(&original_g, None, Some("ground_truth_original".to_string()));
 
     let num_gen_options = [6000];
     for num_generations in num_gen_options {
         for solver_iter in 0..NUM_SOLVER_EVALUATIONS {
             println!("\n\nSolver iteration: {}", solver_iter);
             //two_level_split_solve_merge(POP_SIZE, num_generations, num_communities, &g);
-            let start = Instant::now();
-            let (pid_array, partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
-            println!("Full multi-level solver elapsed time: {:?}", start.elapsed());
+            if use_original_graph {
+                let start = Instant::now();
 
-            println!("pid_array: {:?}", pid_array);
-            let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, true);
-            println!("Just calculated immediate successor info");
-            let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
-            let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
-            println!("Immediate succesor info: {:?}", immediate_successor_execution_info);
-            println!("Immediate succesor permanence: {:?}", ims_permanence);
-            println!("Immediate succesor surprise: {:?}", ims_surprise);
+                let (pid_array, partial_solutions) = split_solve_merge(POP_SIZE, num_generations, num_communities, &g, None);
+                println!("Full multi-level solver elapsed time: {:?}", start.elapsed());
 
-            for _ in 0..NUM_SIMULATOR_EVALUATIONS {
-                let num_gen = 0;
-
-                let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
+                println!("pid_array: {:?}", pid_array);
+                let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, true);
+                println!("Just calculated immediate successor info");
                 let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
                 let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
+                println!("Immediate succesor info: {:?}", immediate_successor_execution_info);
+                println!("Immediate succesor permanence: {:?}", ims_permanence);
+                println!("Immediate succesor surprise: {:?}", ims_surprise);
 
-                _f.write(format!("Immediate successor,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
-            }
+                for _ in 0..NUM_SIMULATOR_EVALUATIONS {
+                    let num_gen = 0;
 
-            let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
-            if immediate_successor_execution_info.speedup > algo_best {
-                visualize_graph(&original_g, Some(&immediate_successor_finalized_placements), Some(format!("immediate_successor_{}", immediate_successor_execution_info.speedup)));
-                best_surprise_per_algo.insert("Random Immediate Successor", immediate_successor_execution_info.speedup);
-            }
+                    let (immediate_successor_finalized_placements, immediate_successor_execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, true);
+                    let ims_permanence = calculate_permanence(&original_g, &immediate_successor_finalized_placements, &unwrap_pid_array(&immediate_successor_finalized_placements));
+                    let ims_surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&immediate_successor_finalized_placements)));
 
-            let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, false);
-            let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
-            let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
-            println!("Multi-level solver info: {:?}", execution_info);
-            println!("Multi-level solver permanence: {:?}", permanence);
-            println!("Multi-level solver surprise: {:?}", surprise);
+                    _f.write(format!("Immediate successor,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, ims_surprise, immediate_successor_execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, ims_permanence).as_bytes()).unwrap();
+                }
 
-            let algo_best = *best_surprise_per_algo.entry("Multi-level differential evolution").or_insert(f64::MIN);
-            if execution_info.speedup > algo_best {
-                visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_{}", execution_info.speedup)));
-                best_surprise_per_algo.insert("Multi-level differential evolution", execution_info.speedup);
+                let algo_best = *best_surprise_per_algo.entry("Random Immediate Successor").or_insert(f64::MIN);
+                if immediate_successor_execution_info.speedup > algo_best {
+                    visualize_graph(&original_g, Some(&immediate_successor_finalized_placements), Some(format!("immediate_successor_{}", immediate_successor_execution_info.speedup)));
+                    best_surprise_per_algo.insert("Random Immediate Successor", immediate_successor_execution_info.speedup);
+                }
+
+                let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_generations, false);
+                let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+                let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
+                println!("Multi-level solver info: {:?}", execution_info);
+                println!("Multi-level solver permanence: {:?}", permanence);
+                println!("Multi-level solver surprise: {:?}", surprise);
+
+                let algo_best = *best_surprise_per_algo.entry("Multi-level differential evolution").or_insert(f64::MIN);
+                if execution_info.speedup > algo_best {
+                    visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_{}", execution_info.speedup)));
+                    best_surprise_per_algo.insert("Multi-level differential evolution", execution_info.speedup);
+                }
+
+                for (num_gen, pid_array) in partial_solutions {
+                    let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &g, Some(&pid_array));
+
+                    for _ in 0..NUM_SIMULATOR_EVALUATIONS {
+                        let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, false);
+                        let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
+                        let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
+
+                        _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
+                    }
+                }
             }
 
             let start = Instant::now();
@@ -2722,20 +2913,15 @@ pub fn test_multi_level_clustering(use_flattened_graph: bool) {
 
             let algo_best = *best_surprise_per_algo.entry("Multi-level tree differential evolution").or_insert(f64::MIN);
             if execution_info.speedup > algo_best {
-                visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_tree_{}", execution_info.speedup)));
+                visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_tree_mapped_to_original_speedup_{}", execution_info.speedup)));
+                visualize_graph(&tree_g, Some(&finalized_core_placements), Some(format!("merged_graph_tree_speedup_{}", execution_info.speedup)));
                 best_surprise_per_algo.insert("Multi-level tree differential evolution", execution_info.speedup);
             }
 
-            for (num_gen, pid_array) in partial_solutions {
-                let (pid_array, _) = split_solve_merge(POP_SIZE, num_gen, num_communities, &g, Some(&pid_array));
-
-                for _ in 0..NUM_SIMULATOR_EVALUATIONS {
-                    let (finalized_core_placements, execution_info) = evaluate_execution_time_and_speedup(&original_g, &unwrap_pid_array(&pid_array), num_gen, false);
-                    let permanence = calculate_permanence(&original_g, &finalized_core_placements, &unwrap_pid_array(&finalized_core_placements));
-                    let surprise = calculate_surprise(&original_g, Some(&unwrap_pid_array(&finalized_core_placements)));
-
-                    _f.write(format!("Differential Evolution,{},{},fitness_test,{},{},{},{},{},{}\n", num_gen, surprise, execution_info.speedup, KERNEL_NUMBER_OF_PARTITIONS, num_nodes, num_edges, num_communities, permanence).as_bytes()).unwrap();
-                }
+            if surprise < best_tree_surprise {
+                visualize_graph(&original_g, Some(&finalized_core_placements), Some(format!("merged_graph_tree_mapped_to_original_surprise_{}", surprise)));
+                visualize_graph(&tree_g, Some(&finalized_core_placements), Some(format!("merged_graph_tree_surprise_{}", surprise)));
+                best_tree_surprise = surprise;
             }
 
             for (num_gen, pid_array) in tree_partial_solutions {
@@ -2752,8 +2938,6 @@ pub fn test_multi_level_clustering(use_flattened_graph: bool) {
         }
     }
 
-    visualize_graph(&multi_pass_tree_transform(&original_g, num_flattening_passes, false), None, Some("ground_truth_flattened".to_string()));
-    visualize_graph(&original_g, None, Some("ground_truth_original".to_string()));
     gen_speedup_bars(TEMP_FILE_NAME, "speedups");
 }
 
@@ -2792,7 +2976,7 @@ pub fn test_graph_normalization() {
     let apply_tree_transform = false;
     let visualize_graphs = true;
 
-    let num_examples = 15;
+    let num_examples = 30;
 
     for i in 0..num_examples {
         println!("Processing example {}", i);
@@ -2827,6 +3011,7 @@ struct ConnectedComponent {
     nodes: Vec<usize>,
     num_nodes: usize,
     min_id: usize,
+    immovable: bool,
 }
 
 impl ConnectedComponent {
@@ -2834,7 +3019,8 @@ impl ConnectedComponent {
         ConnectedComponent {
             nodes: vec![],
             num_nodes: 0,
-            min_id: usize::MAX
+            min_id: usize::MAX,
+            immovable: false
         }
     }
 
@@ -2854,53 +3040,111 @@ impl ConnectedComponent {
         return pid_array[self.nodes[0]];
     }
 
-    fn update_node_pids(&self, pid_array: &mut [usize], target_pid: usize) {
+    fn update_node_pids(&self, pid_array: &mut [usize], target_pid: usize) -> bool {
+        if self.immovable {
+            return false;
+        }
+
         for n in &self.nodes {
             pid_array[*n] = target_pid;
         }
+
+        return true;
     }
 }
 
 fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, adapt_weights: bool, pid_array: Option<&[usize]>) -> Vec<usize> {
+    let verbose = false;
     let mut g = original_graph.clone();
     let mut was_added = vec![false; MAX_NUMBER_OF_NODES];
 
     let node_refs: Vec<(petgraph::prelude::NodeIndex<usize>, &NodeInfo)> = g.node_references().collect();
     let first_node = node_refs[0].id();
+    let mut pid_array_from_weights: Vec<usize> = vec![];
 
-    let mut pid_array = pid_array.unwrap();
+    let mut pid_array = if pid_array.is_some() {
+        pid_array.unwrap()
+    } else {
+        pid_array_from_weights.resize(original_graph.node_count(), 0);
+
+        for w in original_graph.node_weights() {
+            pid_array_from_weights[w.numerical_id] = w.partition_id;
+        }
+
+        pid_array_from_weights.as_slice()
+    };
+
+    let mut cleaned_pid_array: Vec<usize> = vec![];
+    cleaned_pid_array.resize(pid_array.len(), 0);
+
+    for (index, pid) in pid_array.iter().enumerate() {
+        cleaned_pid_array[index] = *pid + 1;
+    }
+
+    let pid_array: &mut [usize] = cleaned_pid_array.as_mut_slice();
+
+    for v in g.node_references() {
+        let degree = g.neighbors_undirected(v.id()).count();
+
+        if degree == 0 {
+            //println!("We'll remove node {:?}", v);
+            pid_array[v.1.numerical_id] = 0;
+        }
+    }
 
     // Calculate the original pid distribution
     let mut pid_distribution: HashMap<usize, usize> = HashMap::new();
 
     let mut max_pid: usize = 0;
-    for pid in pid_array {
+    for (index, pid) in pid_array.iter().enumerate() {
         if *pid > max_pid {
             max_pid = *pid;
         }
-        *pid_distribution.entry(*pid).or_insert(0) += 1;
+        
+        //*pid_distribution.entry(*pid).or_insert(0) += 1;
+        let current_min = pid_distribution.entry(*pid).or_insert(usize::MAX);
+        if *pid < *current_min {
+            *current_min = *pid;
+        }
     }
 
     let mut pid_dist_vec: Vec<Option<(usize, usize)>> = vec![];
     pid_dist_vec.resize(max_pid + 1, None);
 
+    // TODO: FIX MENTIONS TO num_tasks, SINCE WE NOW HOLD MIN-ID INFO
     for pid in pid_distribution.keys() {
         let num_tasks = pid_distribution.get(pid).unwrap();
-        println!("Number of tasks with pid {}: {}", pid, num_tasks);
+        if verbose {
+            println!("Number of tasks with pid {}: {}", pid, num_tasks);
+        }
         pid_dist_vec[*pid] = Some((*pid, *num_tasks));
     }
+
+    pid_dist_vec[0] = Some((0, 0));
 
     pid_dist_vec.sort_by(|a, b| {
         let a = if a.is_some() {
             a.unwrap()
         } else {
-            (0, usize::MAX)
+            (usize::MAX, usize::MAX)
+        };
+
+        let a = if a.0 == 0 {
+            (0, 0)
+        } else {
+            a
         };
 
         let b = if b.is_some() {
             b.unwrap()
         } else {
-            (0, usize::MAX)
+            (usize::MAX, usize::MAX)
+        };
+
+        let b = if b.0 == 0 {
+            (0, 0)
+        } else {
+            b
         };
 
         a.1.cmp(&b.1)
@@ -2919,13 +3163,15 @@ fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, ada
         old_to_new_pids.insert(old_pid, new_pid);
     }
 
-    println!("pid_dist_vec");
-    for t in pid_dist_vec {
-        println!("{:?}", t);
-    }
+    if verbose {
+        println!("pid_dist_vec");
+        for t in pid_dist_vec {
+            println!("{:?}", t);
+        }
 
-    println!("old_to_new_pids");
-    println!("{:?}", old_to_new_pids);
+        println!("old_to_new_pids");
+        println!("{:?}", old_to_new_pids);
+    }
 
     let mut new_pid_array: Vec<usize> = vec![];
     new_pid_array.resize(pid_array.len(), 0);
@@ -2934,12 +3180,13 @@ fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, ada
         new_pid_array[i] = *old_to_new_pids.get(&pid_array[i]).unwrap();
     }
 
-    println!("{:?}", pid_array);
-    println!("{:?}", new_pid_array);
+    if verbose {
+        println!("{:?}", pid_array);
+        println!("{:?}", new_pid_array);
+    }
 
     let mut edges_to_remove = vec![];
 
-    //TODO: Remove inter-cluster edges at this point
     for v in g.node_references() {
         for n in g.neighbors(v.id()) {
             let v_id = g.node_weight(v.id()).unwrap().numerical_id;
@@ -2949,19 +3196,25 @@ fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, ada
             let n_pid = pid_array[n_id];
 
             if v_pid != n_pid {
-                println!("Inter-cluster edge: ({}, {})", v_id, n_id);
+                if verbose {
+                    println!("Inter-cluster edge: ({}, {})", v_id, n_id);
+                }
                 //let edge_to_remove = g.find_edge(v.id(), n);
                 edges_to_remove.push((v.id(), n));
             }
         }
     }
 
-    println!("Number of edges in g: {}", g.edge_count());
+    if verbose {
+        println!("Number of edges in g: {}", g.edge_count());
+    }
     for (a, b) in edges_to_remove {
         let e = g.find_edge(a, b);
         g.remove_edge(e.unwrap());
     }
-    println!("Number of edges in g: {}", g.edge_count());
+    if verbose {
+        println!("Number of edges in g: {}", g.edge_count());
+    }
 
     let mut ccs: Vec<ConnectedComponent> = vec![];
     let mut nodes_per_connected_component: Vec<Vec<usize>> = vec![];
@@ -3020,16 +3273,22 @@ fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, ada
     let mut size_cc_hash: HashMap<usize, Vec<&ConnectedComponent>> = HashMap::new();
     let mut size_count_per_cluster_hash: HashMap<usize, Vec<usize>> = HashMap::new();
 
-    for (index, cc) in ccs.iter().enumerate() {
-        print!("Connected component {}, with {} elements and min_id {}: ", index, cc.num_nodes, cc.min_id);
-        for n in &cc.nodes {
-            print!("{:?}, ", n);
+    for (index, cc) in ccs.iter_mut().enumerate() {
+        if verbose {
+            print!("Connected component {}, with {} elements and min_id {}: ", index, cc.num_nodes, cc.min_id);
+            for n in &cc.nodes {
+                print!("{:?}, ", n);
+            }
+            println!();
         }
-        println!();
 
         let cc_pid = cc.cluster_id(&new_pid_array);
+        if cc_pid == 0 {
+            cc.immovable = true;
+            continue;
+        }
 
-        size_cc_hash.entry(cc.num_nodes).or_insert(vec![]).push(&cc);
+        size_cc_hash.entry(cc.num_nodes).or_insert(vec![]).push(cc);
 
         size_count_per_cluster_hash.entry(cc.num_nodes).or_insert_with(|| {
             let mut count_vec = vec![];
@@ -3038,44 +3297,41 @@ fn normalize_graph(original_graph: &Graph<NodeInfo, usize, Directed, usize>, ada
         })[cc_pid] += 1;
     }
 
-    println!("size_cc_hash");
-    println!("{:?}, ", size_cc_hash);
+    if verbose {
+        println!("size_cc_hash");
+        println!("{:?}, ", size_cc_hash);
 
-    println!("size_count_per_cluster_hash");
-    println!("{:?}, ", size_count_per_cluster_hash);
+        println!("size_count_per_cluster_hash");
+        println!("{:?}, ", size_count_per_cluster_hash);
+    }
 
     for (size, count) in size_count_per_cluster_hash.iter() {
-        println!("Size being processed: {}", size);
+        if verbose {
+            println!("Size being processed: {}", size);
+        }
 
         let mut ccs_processed_so_far = 0;
 
         for c_id in 0..=max_pid {
-            println!("Partition receiving nodes: {}", c_id);
-
             let mut ccs_left_to_update = count[c_id];
-            println!("We'll be updating the pids of {} connected components.", ccs_left_to_update);
+
+            if verbose {
+                println!("Partition receiving nodes: {}", c_id);
+                println!("We'll be updating the pids of {} connected components.", ccs_left_to_update);
+            }
 
             let ccs_to_update = size_cc_hash.get_mut(&size).unwrap();
 
             while ccs_left_to_update > 0 {
-                ccs_to_update[ccs_processed_so_far].update_node_pids(&mut new_pid_array, c_id);
-                ccs_processed_so_far += 1;
-                ccs_left_to_update -= 1;
+                let moved_cc = ccs_to_update[ccs_processed_so_far].update_node_pids(&mut new_pid_array, c_id);
+
+                if moved_cc {
+                    ccs_processed_so_far += 1;
+                    ccs_left_to_update -= 1;
+                }
             }
         }
     }
-
-
-/*
-    // We don't need to sort the vectors independently
-    // here because we have already sorted the whole
-    // sequence of connected components before
-    for cc_vec in count_cc_hash.values_mut() {
-        cc_vec.sort_by(|a, b| {
-            a.min_id.cmp(&b.min_id)
-        });
-    }
-*/
 
     new_pid_array
 }
