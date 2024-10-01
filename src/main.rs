@@ -442,7 +442,7 @@ fn main() {
     //test_multi_level_clustering(true, false); // 2023-10
     //test_gen_multiple_ground_truths(1, 256, 0.0, 1.0, 1, 32, 0.02, 0.020001, 1000, true, false, 2, 0.00, 0.50, 1, false) // For graph-cruncher
 
-    test_gen_multiple_ground_truths(0, 128, 0.0, 1.0, 1, 32, 0.02, 0.020001, 1000, true, true, 2, 0.00, 0.50, 1, false) // For graph-cruncher
+    test_gen_multiple_ground_truths(0, 128, 0.0, 1.0, 1, 32, 0.02, 0.020001, 100, true, true, 2, 0.00, 0.50, 1, false) // For graph-cruncher
 
     //test_gen_multiple_ground_truths(64, 64, 0.0, 1.0, 2, 2, 0.02, 0.020001, 100, true, true, 2, 0.00, 0.02, 1);
     //test_gen_multiple_ground_truths(64, 64, 0.0, 0.2, 2, 8, 0.02, 0.020001, 100, true, true, 2, 0.00, 0.02, 1);
